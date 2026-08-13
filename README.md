@@ -65,17 +65,17 @@ docker compose down
 
 Configure the service via environment variables in `docker-compose.yml` or a `.env` file:
 
-| Variable | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `PORT` | Integer | `8000` | Port for the Uvicorn HTTP server. |
-| `HOST` | String | `0.0.0.0` | Host IP address to bind to. |
-| `API_KEY` | String | *(Optional / None)* | Secret API key to require on `/api` and `/rss` requests (via `?apikey=...` or header). |
-| `EXT_DOMAIN` | String | `https://ext.to` | ext.to mirror domain (`https://ext.to`, `https://extto.com`, `https://ext2.to`). |
-| `DB_PATH` | String | `cache.db` (`/app/data/cache.db` in Docker) | File path for persistent SQLite cache. |
-| `CACHE_TTL_MINUTES` | Integer | `60` | Duration (in minutes) search results and resolved magnets remain cached. |
-| `HEADLESS` | Boolean | `true` | Run Playwright Chromium in headless mode. |
-| `MAX_MAGNETS_PER_QUERY` | Integer | `25` | Max number of magnet links to dynamically resolve per search query. |
-| `FLARESOLVERR_URL` | String | *(Optional / None)* | URL of an external FlareSolverr instance if used for Cloudflare clearance. |
+| Variable                | Type    | Default                                     | Description                                                                            |
+| :---------------------- | :------ | :------------------------------------------ | :------------------------------------------------------------------------------------- |
+| `PORT`                  | Integer | `8000`                                      | Port for the Uvicorn HTTP server.                                                      |
+| `HOST`                  | String  | `0.0.0.0`                                   | Host IP address to bind to.                                                            |
+| `API_KEY`               | String  | _(Optional / None)_                         | Secret API key to require on `/api` and `/rss` requests (via `?apikey=...` or header). |
+| `EXT_DOMAIN`            | String  | `https://ext.to`                            | ext.to mirror domain (`https://ext.to`, `https://extto.com`, `https://ext2.to`).       |
+| `DB_PATH`               | String  | `cache.db` (`/app/data/cache.db` in Docker) | File path for persistent SQLite cache.                                                 |
+| `CACHE_TTL_MINUTES`     | Integer | `60`                                        | Duration (in minutes) search results and resolved magnets remain cached.               |
+| `HEADLESS`              | Boolean | `true`                                      | Run Playwright Chromium in headless mode.                                              |
+| `MAX_MAGNETS_PER_QUERY` | Integer | `25`                                        | Max number of magnet links to dynamically resolve per search query.                    |
+| `FLARESOLVERR_URL`      | String  | _(Optional / None)_                         | URL of an external FlareSolverr instance if used for Cloudflare clearance.             |
 
 ---
 
@@ -134,10 +134,3 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 | `GET`  | `/rss?q=ubuntu`          | Standard RSS 2.0 XML Feed      |
 | `GET`  | `/health`                | Healthcheck Endpoint           |
 | `GET`  | `/`                      | Web Documentation Landing Page |
-
----
-
-## GitHub Actions CI/CD Workflows
-
-- [`.github/workflows/test.yml`](file:///.github/workflows/test.yml): Runs unit & integration test suite on every `push` and `pull_request`.
-- [`.github/workflows/docker-publish.yml`](file:///.github/workflows/docker-publish.yml): Automatically compiles and publishes Docker images to GitHub Container Registry (`ghcr.io`) upon pushing to `main` or tagging a release (`v1.0.0`).
