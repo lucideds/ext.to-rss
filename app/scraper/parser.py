@@ -12,7 +12,7 @@ def parse_size_to_bytes(size_str: str) -> int:
         return 0
     
     size_str = size_str.strip().upper()
-    match = re.search(r"([\d\.]+)\s*([KMGTPE]?B|BYTES?)", size_str)
+    match = re.search(r"([\d\.]+)\s*([KMGTPE]?I?B|BYTES?)", size_str)
     if not match:
         return 0
     

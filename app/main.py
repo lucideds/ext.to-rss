@@ -1,4 +1,5 @@
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Query, HTTPException, Response, Depends, status
@@ -19,7 +20,8 @@ cache_db = CacheDatabase(db_path=settings.db_path, ttl_seconds=settings.cache_tt
 scraper = ExtToScraper(
     base_url=settings.ext_domain,
     headless=settings.headless,
-    flaresolverr_url=settings.flaresolverr_url
+    flaresolverr_url=settings.flaresolverr_url,
+    cache_db=cache_db,
 )
 
 
@@ -88,11 +90,19 @@ async def torznab_api(
     search_query = q or ""
     if imdbid:
         search_query = imdbid if not search_query else f"{search_query} {imdbid}"
+
     if season:
-        season_str = f"S{int(season):02d}"
-        if ep:
-            season_str += f"E{int(ep):02d}"
-        search_query = f"{search_query} {season_str}".strip()
+        try:
+            clean_season = re.sub(r"[^\d]", "", str(season))
+            if clean_season:
+                season_str = f"S{int(clean_season):02d}"
+                if ep:
+                    clean_ep = re.sub(r"[^\d]", "", str(ep))
+                    if clean_ep:
+                        season_str += f"E{int(clean_ep):02d}"
+                search_query = f"{search_query} {season_str}".strip()
+        except ValueError:
+            pass
 
     if not search_query:
         # If query is empty, default search to recent popular browse query
@@ -111,6 +121,19 @@ async def torznab_api(
         # Store in cache
         dict_items = [item.model_dump() for item in items]
         await cache_db.set_query_cache(cache_key, dict_items)
+
+    # Filter by Torznab categories if requested
+    if cat:
+        requested_cats = set()
+        for c in cat.split(","):
+            c_clean = c.strip()
+            if c_clean.isdigit():
+                requested_cats.add(int(c_clean))
+        if requested_cats:
+            items = [
+                item for item in items
+                if item.torznab_cat_id in requested_cats or (item.torznab_cat_id // 1000 * 1000) in requested_cats
+            ]
 
     # Slice limit/offset
     sliced_items = items[offset : offset + limit] if limit else items
@@ -139,6 +162,14 @@ async def rss_feed(
         items = await scraper.search(search_query, max_magnets=settings.max_magnets_per_query)
         dict_items = [item.model_dump() for item in items]
         await cache_db.set_query_cache(cache_key, dict_items)
+
+    # Filter by category string or Torznab cat ID if provided
+    if cat:
+        cat_lower = cat.strip().lower()
+        items = [
+            item for item in items
+            if cat_lower in item.category.lower() or cat_lower in str(item.torznab_cat_id)
+        ]
 
     xml_content = build_rss_feed_xml(items, feed_title=f"ext.to RSS Feed - {search_query}")
     return Response(content=xml_content, media_type="application/xml")

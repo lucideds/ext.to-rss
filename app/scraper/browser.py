@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import hashlib
+import re
 import urllib.parse
 from typing import List, Dict, Optional, Tuple
 from curl_cffi import requests as cffi_requests
@@ -10,6 +11,7 @@ from playwright_stealth import Stealth
 
 from .models import TorrentItem
 from .parser import ExtToParser, extract_infohash
+from app.cache.db import CacheDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +25,13 @@ class ExtToScraper:
         headless: bool = True,
         timeout: int = 30,
         flaresolverr_url: Optional[str] = None,
+        cache_db: Optional[CacheDatabase] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.headless = headless
         self.timeout = timeout
         self.flaresolverr_url = flaresolverr_url
+        self.cache_db = cache_db
         self.parser = ExtToParser(base_url=self.base_url)
         self.mirror_domains = [
             self.base_url,
@@ -100,7 +104,20 @@ class ExtToScraper:
 
     async def resolve_magnet_for_item(self, details_url: str, torrent_id: Optional[int] = None) -> Tuple[Optional[str], Optional[str]]:
         """Fetch detail page, extract tokens, compute HMAC, and retrieve magnet link and infohash."""
-        loop = asyncio.get_event_loop()
+        # Extract torrent_id if not provided
+        if not torrent_id:
+            id_match = re.search(r"-(\d+)/?$", details_url)
+            if id_match:
+                torrent_id = int(id_match.group(1))
+
+        # Check magnet cache if available
+        if self.cache_db and torrent_id:
+            cached = await self.cache_db.get_magnet_cache(torrent_id)
+            if cached and cached[0]:
+                logger.debug(f"Magnet cache HIT for torrent_id {torrent_id}")
+                return cached[0], cached[1]
+
+        loop = asyncio.get_running_loop()
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "X-Requested-With": "XMLHttpRequest",
@@ -109,22 +126,16 @@ class ExtToScraper:
         try:
             # 1. Fetch detail page HTML
             def _fetch_detail():
-                s = cffi_requests.Session(impersonate="chrome120")
-                r = s.get(details_url, headers=headers, timeout=self.timeout)
-                return r.text, s
+                with cffi_requests.Session(impersonate="chrome120") as s:
+                    r = s.get(details_url, headers=headers, timeout=self.timeout)
+                    return r.text
 
-            html, session = await loop.run_in_executor(None, _fetch_detail)
+            html = await loop.run_in_executor(None, _fetch_detail)
             if not html:
                 return None, None
 
             # Extract CSRF and Page Tokens
             csrf_token, page_token = self.parser.parse_tokens(html)
-
-            # Extract torrent_id if not provided
-            if not torrent_id:
-                id_match = re.search(r"-(\d+)/?$", details_url)
-                if id_match:
-                    torrent_id = int(id_match.group(1))
 
             if not torrent_id or not csrf_token or not page_token:
                 return None, None
@@ -148,8 +159,9 @@ class ExtToScraper:
             api_url = f"{domain}/ajax/getTorrentMagnet.php"
 
             def _post_magnet():
-                resp = session.post(api_url, data=post_data, headers={**headers, "Referer": details_url}, timeout=10)
-                return resp
+                with cffi_requests.Session(impersonate="chrome120") as s:
+                    resp = s.post(api_url, data=post_data, headers={**headers, "Referer": details_url}, timeout=10)
+                    return resp
 
             api_resp = await loop.run_in_executor(None, _post_magnet)
             if api_resp.status_code == 200:
@@ -157,6 +169,10 @@ class ExtToScraper:
                 if data.get("success") and data.get("url"):
                     magnet = data.get("url")
                     infohash = extract_infohash(magnet)
+
+                    if self.cache_db and torrent_id:
+                        await self.cache_db.set_magnet_cache(torrent_id, magnet, infohash)
+
                     return magnet, infohash
 
         except Exception as e:
@@ -166,7 +182,7 @@ class ExtToScraper:
 
     async def _fetch_with_curl_cffi(self, path: str) -> Tuple[Optional[str], str]:
         """Attempt fast HTTP fetch using curl_cffi Chrome TLS impersonation across mirror domains."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -215,16 +231,18 @@ class ExtToScraper:
             except Exception:
                 browser = await p.chromium.launch(**launch_options)
 
-            context = await browser.new_context(viewport={"width": 1920, "height": 1080})
-            page = await context.new_page()
-            await Stealth().apply_stealth_async(page)
+            try:
+                context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+                page = await context.new_page()
+                await Stealth().apply_stealth_async(page)
 
-            await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
-            await asyncio.sleep(2.0)
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                await asyncio.sleep(2.0)
 
-            content = await page.content()
-            await browser.close()
-            return content, self.base_url
+                content = await page.content()
+                return content, self.base_url
+            finally:
+                await browser.close()
 
     def _is_cloudflare_challenge(self, html: str) -> bool:
         """Detect if HTML is a Cloudflare interstitial or Turnstile challenge."""
@@ -238,3 +256,4 @@ class ExtToScraper:
             "Performing security verification",
         ]
         return any(ind.lower() in html.lower() for ind in indicators)
+

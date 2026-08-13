@@ -45,8 +45,7 @@ ext.to-rss/
 ├── Dockerfile               # Multi-stage production container image
 ├── docker-compose.yml       # Docker Compose setup
 ├── requirements.txt         # Python dependencies
-├── README.md                # User-facing documentation
-└── test_scraper_live.py     # CLI live scraper test utility
+└── README.md                # User-facing documentation
 ```
 
 ---
@@ -86,9 +85,6 @@ playwright install chromium
 ```powershell
 # Run full pytest suite
 .venv\Scripts\python -m pytest tests/
-
-# Run live scraper verification script
-.venv\Scripts\python test_scraper_live.py -q ubuntu
 ```
 
 ### Running Local Development Server

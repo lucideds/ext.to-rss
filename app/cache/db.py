@@ -14,6 +14,7 @@ class CacheDatabase:
     def __init__(self, db_path: str = "cache.db", ttl_seconds: int = 3600):
         self.db_path = db_path
         self.ttl_seconds = ttl_seconds
+        self._initialized = False
 
     async def init_db(self):
         """Initialize SQLite database tables."""
@@ -34,10 +35,16 @@ class CacheDatabase:
                 )
             """)
             await db.commit()
+        self._initialized = True
+
+    async def ensure_db(self):
+        """Ensure database tables exist (idempotent, runs once per instance)."""
+        if not self._initialized:
+            await self.init_db()
 
     async def get_query_cache(self, query_key: str) -> Optional[List[Dict]]:
         """Retrieve cached query results if within TTL."""
-        await self.init_db()
+        await self.ensure_db()
         now = int(time.time())
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
@@ -56,7 +63,7 @@ class CacheDatabase:
 
     async def set_query_cache(self, query_key: str, items_dict: List[Dict]):
         """Save query search items to SQLite cache."""
-        await self.init_db()
+        await self.ensure_db()
         now = int(time.time())
         json_str = json.dumps(items_dict, default=str)
         async with aiosqlite.connect(self.db_path) as db:
@@ -68,6 +75,7 @@ class CacheDatabase:
 
     async def get_magnet_cache(self, torrent_id: int) -> Optional[tuple[str, Optional[str]]]:
         """Retrieve cached magnet link for torrent_id."""
+        await self.ensure_db()
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
                 "SELECT magnet_link, infohash FROM magnet_cache WHERE torrent_id = ?",
@@ -80,6 +88,7 @@ class CacheDatabase:
 
     async def set_magnet_cache(self, torrent_id: int, magnet_link: str, infohash: Optional[str]):
         """Cache resolved magnet link for torrent_id."""
+        await self.ensure_db()
         now = int(time.time())
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
