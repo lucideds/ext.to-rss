@@ -1,3 +1,4 @@
+import html as html_escape
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
@@ -9,10 +10,11 @@ from .categories import get_all_categories_xml, map_cat_to_torznab
 def build_caps_xml(site_name: str = "ext.to RSS / Torznab") -> str:
     """Generate Torznab capabilities XML response for t=caps request."""
     categories_snippet = get_all_categories_xml()
-    
+    safe_site_name = html_escape.escape(site_name)
+
     xml_str = f"""<?xml version="1.0" encoding="UTF-8"?>
 <caps>
-  <server version="1.0" title="{site_name}" strapline="ext.to Torznab API"/>
+  <server version="1.0" title="{safe_site_name}" strapline="ext.to Torznab API"/>
   <limits max="100" default="50"/>
   <searching>
     <search available="yes" supportedParams="q,cat"/>
@@ -46,9 +48,11 @@ def build_torznab_feed_xml(items: List[TorrentItem], title: str = "ext.to Torzna
         download_url = item.magnet_link or item.details_url
         guid_url = item.details_url or download_url
 
-        ET.SubElement(entry, "guid", {"isPermaLink": "true"}).text = guid_url
+        is_permalink = "true" if (guid_url and guid_url.startswith("http")) else "false"
+        ET.SubElement(entry, "guid", {"isPermaLink": is_permalink}).text = guid_url
         ET.SubElement(entry, "comments").text = guid_url
         ET.SubElement(entry, "link").text = download_url
+
 
         # Enclosure (Required by Prowlarr/Torznab parsers)
         ET.SubElement(entry, "enclosure", {

@@ -13,8 +13,10 @@ services:
       - PORT=8000
       - HOST=0.0.0.0
       - EXT_DOMAIN=https://extto.com
+      - DB_PATH=/app/data/cache.db
       - CACHE_TTL_MINUTES=60
       - HEADLESS=true
       - MAX_MAGNETS_PER_QUERY=25
     volumes:
       - ./data:/app/data
+

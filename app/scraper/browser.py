@@ -68,15 +68,22 @@ class ExtToScraper:
         raw_items = self.parser.parse_search_results(html)
         logger.info(f"Scraped {len(raw_items)} raw torrent items from {current_base}")
 
-        # Resolve magnet links concurrently for top results up to max_magnets
+        # Resolve magnet links with concurrency limit for top results up to max_magnets
+        sem = asyncio.Semaphore(5)
+
+        async def _resolve_with_sem(url: str, tid: Optional[int]):
+            async with sem:
+                return await self.resolve_magnet_for_item(url, tid)
+
         magnet_tasks = []
         for idx, raw in enumerate(raw_items):
             if idx < max_magnets and raw.get("details_url"):
-                magnet_tasks.append(self.resolve_magnet_for_item(raw["details_url"], raw.get("torrent_id")))
+                magnet_tasks.append(_resolve_with_sem(raw["details_url"], raw.get("torrent_id")))
             else:
                 magnet_tasks.append(asyncio.sleep(0, result=(None, None)))
 
         resolved_magnets = await asyncio.gather(*magnet_tasks, return_exceptions=True)
+
 
         torrent_items: List[TorrentItem] = []
         for raw, res in zip(raw_items, resolved_magnets):

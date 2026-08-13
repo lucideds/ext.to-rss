@@ -1,5 +1,7 @@
 import logging
 import re
+import secrets
+from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 from fastapi import FastAPI, Query, HTTPException, Response, Depends, status
@@ -45,7 +47,7 @@ app = FastAPI(
 def verify_api_key(apikey: Optional[str] = Query(None)):
     """Verify optional API key parameter if configured in settings."""
     if settings.api_key:
-        if not apikey or apikey != settings.api_key:
+        if not apikey or not secrets.compare_digest(apikey, settings.api_key):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid or missing API key."
@@ -105,11 +107,11 @@ async def torznab_api(
             pass
 
     if not search_query:
-        # If query is empty, default search to recent popular browse query
-        search_query = "2024"
+        # If query is empty, default search to current year
+        search_query = str(datetime.now().year)
 
-    # Cache key
-    cache_key = f"torznab:{search_query}:{cat or ''}:{limit}"
+    # Unified search query cache key
+    cache_key = f"query:{search_query}"
 
     # Check cache first
     cached_data = await cache_db.get_query_cache(cache_key)
@@ -153,7 +155,7 @@ async def rss_feed(
 ):
     """Standard RSS 2.0 feed XML endpoint for feed readers."""
     search_query = q or "latest"
-    cache_key = f"rss:{search_query}:{cat or ''}"
+    cache_key = f"query:{search_query}"
 
     cached_data = await cache_db.get_query_cache(cache_key)
     if cached_data:
@@ -173,6 +175,7 @@ async def rss_feed(
 
     xml_content = build_rss_feed_xml(items, feed_title=f"ext.to RSS Feed - {search_query}")
     return Response(content=xml_content, media_type="application/xml")
+
 
 
 @app.get("/", response_class=HTMLResponse, tags=["Web"])

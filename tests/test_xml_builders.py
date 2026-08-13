@@ -7,14 +7,14 @@ from app.torznab.categories import map_cat_to_torznab, get_all_categories_xml, T
 
 
 def test_build_caps_xml():
-    xml_str = build_caps_xml(site_name="Test Indexer")
+    xml_str = build_caps_xml(site_name="Test & Indexer <Pro>")
     assert "<?xml" in xml_str
     root = ET.fromstring(xml_str.strip())
     assert root.tag == "caps"
 
     server = root.find("server")
     assert server is not None
-    assert server.attrib["title"] == "Test Indexer"
+    assert server.attrib["title"] == "Test & Indexer <Pro>"
 
     searching = root.find("searching")
     assert searching is not None
@@ -25,6 +25,7 @@ def test_build_caps_xml():
     assert categories is not None
     cats = categories.findall("category")
     assert len(cats) > 0
+
 
 
 def test_build_torznab_feed_xml_full_item():
@@ -93,6 +94,7 @@ def test_build_torznab_feed_xml_fallback_urls():
 
     # When magnet is missing, link should fallback to details_url
     assert rss_item.find("link").text == "https://extto.com/sample-123/"
+    assert rss_item.find("guid").attrib["isPermaLink"] == "true"
     enclosure = rss_item.find("enclosure")
     assert enclosure.attrib["url"] == "https://extto.com/sample-123/"
     # Min length fallback is 1024
@@ -101,6 +103,19 @@ def test_build_torznab_feed_xml_fallback_urls():
     attrs = {elem.attrib["name"]: elem.attrib["value"] for elem in rss_item.findall("{http://torznab.com/schemas/2015/feed}attr")}
     assert "magneturl" not in attrs
     assert "infohash" not in attrs
+
+    # Check magnet only fallback where guid isPermaLink is false
+    magnet_only_item = TorrentItem(
+        title="Magnet Only",
+        details_url=None,
+        magnet_link="magnet:?xt=urn:btih:112233",
+        category="Other",
+    )
+    xml_mag = build_torznab_feed_xml([magnet_only_item])
+    root_mag = ET.fromstring(xml_mag.strip())
+    guid_elem = root_mag.find("channel/item/guid")
+    assert guid_elem.attrib["isPermaLink"] == "false"
+
 
 
 def test_build_rss_feed_xml():

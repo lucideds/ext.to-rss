@@ -90,3 +90,40 @@ async def test_cache_overwrite_and_ensure_db():
     finally:
         if os.path.exists(db_path):
             os.remove(db_path)
+
+
+@pytest.mark.anyio
+async def test_cache_prune_expired():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        cache_db = CacheDatabase(db_path=db_path, ttl_seconds=10)
+        await cache_db.init_db()
+
+        # Insert fresh and expired entries
+        now = int(time.time())
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "INSERT INTO query_cache (query_key, json_data, created_at) VALUES (?, ?, ?)",
+                ("fresh_key", '[{"title": "Fresh"}]', now)
+            )
+            await db.execute(
+                "INSERT INTO query_cache (query_key, json_data, created_at) VALUES (?, ?, ?)",
+                ("old_key", '[{"title": "Old"}]', now - 100)
+            )
+            await db.commit()
+
+        await cache_db.prune_expired()
+
+        async with aiosqlite.connect(db_path) as db:
+            async with db.execute("SELECT query_key FROM query_cache") as cursor:
+                remaining = [row[0] for row in await cursor.fetchall()]
+
+        assert "fresh_key" in remaining
+        assert "old_key" not in remaining
+
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+

@@ -1,6 +1,7 @@
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
+from app.torznab.categories import map_cat_to_torznab
 
 
 class TorrentItem(BaseModel):
@@ -21,21 +22,5 @@ class TorrentItem(BaseModel):
     @property
     def torznab_cat_id(self) -> int:
         """Map ext.to category name to standard Torznab category ID."""
-        cat_lower = self.category.lower()
-        if "movie" in cat_lower:
-            return 2000
-        elif "tv" in cat_lower or "show" in cat_lower or "episode" in cat_lower:
-            return 5000
-        elif "music" in cat_lower or "audio" in cat_lower:
-            return 3000
-        elif "game" in cat_lower:
-            return 1000
-        elif "app" in cat_lower or "software" in cat_lower:
-            return 4000
-        elif "book" in cat_lower or "doc" in cat_lower:
-            return 7000
-        elif "anime" in cat_lower:
-            return 5070
-        elif "xxx" in cat_lower or "adult" in cat_lower:
-            return 6000
-        return 8000
+        return map_cat_to_torznab(self.category)
+

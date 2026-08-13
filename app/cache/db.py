@@ -17,7 +17,11 @@ class CacheDatabase:
         self._initialized = False
 
     async def init_db(self):
-        """Initialize SQLite database tables."""
+        """Initialize SQLite database tables and prune expired entries."""
+        db_dir = os.path.dirname(self.db_path)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS query_cache (
@@ -36,11 +40,24 @@ class CacheDatabase:
             """)
             await db.commit()
         self._initialized = True
+        await self.prune_expired()
+
+    async def prune_expired(self):
+        """Remove expired entries from query_cache table."""
+        cutoff = int(time.time()) - self.ttl_seconds
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute("DELETE FROM query_cache WHERE created_at < ?", (cutoff,))
+                await db.commit()
+                logger.debug("Pruned expired query_cache entries.")
+        except Exception as e:
+            logger.warning(f"Failed pruning expired cache: {e}")
 
     async def ensure_db(self):
         """Ensure database tables exist (idempotent, runs once per instance)."""
         if not self._initialized:
             await self.init_db()
+
 
     async def get_query_cache(self, query_key: str) -> Optional[List[Dict]]:
         """Retrieve cached query results if within TTL."""
