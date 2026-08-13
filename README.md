@@ -1,7 +1,7 @@
 # ext.to RSS & Torznab API Generator
 
-[![Run Tests](https://github.com/OWNER/REPO/actions/workflows/test.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/test.yml)
-[![Build and Push Docker Image](https://github.com/OWNER/REPO/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/docker-publish.yml)
+[![Run Tests](https://github.com/lucideds/ext.to-rss/actions/workflows/test.yml/badge.svg)](https://github.com/lucideds/ext.to-rss/actions/workflows/test.yml)
+[![Build and Push Docker Image](https://github.com/lucideds/ext.to-rss/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/lucideds/ext.to-rss/actions/workflows/docker-publish.yml)
 
 Self-contained proxy service that scrapes **ext.to** (bypassing Cloudflare protections) and exposes standard **Torznab API** endpoints for Prowlarr/Sonarr/Radarr and **RSS 2.0 XML** feeds for RSS aggregators.
 
@@ -27,7 +27,7 @@ docker run -d \
   --name ext-to-rss \
   -p 8000:8000 \
   --restart unless-stopped \
-  ghcr.io/YOUR_GITHUB_USERNAME/ext.to-rss:latest
+  ghcr.io/lucideds/ext.to-rss:latest
 ```
 
 ### Option B: Running with Docker Compose
@@ -41,17 +41,19 @@ docker-compose up -d --build
 ### Option C: Local Python Setup
 
 1. **Clone & Setup Virtual Environment**:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   pip install -r requirements.txt
-   playwright install chromium
-   ```
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium
+```
 
 2. **Run Server**:
-   ```bash
-   uvicorn app.main:app --host 0.0.0.0 --port 8000
-   ```
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
 ---
 
@@ -69,13 +71,13 @@ docker-compose up -d --build
 
 ## API Endpoints
 
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api?t=caps` | Torznab Capabilities XML |
-| `GET` | `/api?t=search&q=ubuntu` | Torznab Search XML |
-| `GET` | `/rss?q=ubuntu` | Standard RSS 2.0 XML Feed |
-| `GET` | `/health` | Healthcheck Endpoint |
-| `GET` | `/` | Web Documentation Landing Page |
+| Method | Endpoint                 | Description                    |
+| :----- | :----------------------- | :----------------------------- |
+| `GET`  | `/api?t=caps`            | Torznab Capabilities XML       |
+| `GET`  | `/api?t=search&q=ubuntu` | Torznab Search XML             |
+| `GET`  | `/rss?q=ubuntu`          | Standard RSS 2.0 XML Feed      |
+| `GET`  | `/health`                | Healthcheck Endpoint           |
+| `GET`  | `/`                      | Web Documentation Landing Page |
 
 ---
 
