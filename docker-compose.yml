@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   ext-to-rss:
-    # Build locally or pull pre-built image from GHCR
-    build: .
-    # image: ghcr.io/YOUR_GITHUB_USERNAME/ext.to-rss:latest
+    # Pull pre-built image from GHCR (or uncomment 'build: .' to build locally)
+    image: ghcr.io/lucideds/ext.to-rss:latest
+    # build: .
     container_name: ext-to-rss
     restart: unless-stopped
     ports:
@@ -12,11 +10,12 @@ services:
     environment:
       - PORT=8000
       - HOST=0.0.0.0
-      - EXT_DOMAIN=https://extto.com
+      - EXT_DOMAIN=https://ext.to
       - DB_PATH=/app/data/cache.db
       - CACHE_TTL_MINUTES=60
       - HEADLESS=true
       - MAX_MAGNETS_PER_QUERY=25
+      # - API_KEY=your_secret_api_key
+      # - FLARESOLVERR_URL=http://flaresolverr:8191/v1
     volumes:
       - ./data:/app/data
-

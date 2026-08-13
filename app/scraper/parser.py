@@ -50,7 +50,7 @@ def extract_infohash(magnet_or_url: str) -> Optional[str]:
 class ExtToParser:
     """HTML parser specifically tailored for ext.to / extto.com search results and metadata."""
 
-    def __init__(self, base_url: str = "https://extto.com"):
+    def __init__(self, base_url: str = "https://ext.to"):
         self.base_url = base_url.rstrip("/")
 
     def parse_tokens(self, html: str) -> tuple[str, str]:

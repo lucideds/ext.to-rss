@@ -88,13 +88,13 @@ def test_parse_search_results_html():
       </body>
     </html>
     """
-    parser = ExtToParser(base_url="https://extto.com")
+    parser = ExtToParser(base_url="https://ext.to")
     items = parser.parse_search_results(sample_html)
 
     assert len(items) == 1
     item = items[0]
     assert item["title"] == "Ubuntu 22.04 LTS Desktop"
-    assert item["details_url"] == "https://extto.com/ubuntu-22-04-iso-12345/"
+    assert item["details_url"] == "https://ext.to/ubuntu-22-04-iso-12345/"
     assert item["torrent_id"] == 12345
     assert item["seeders"] == 142
     assert item["leechers"] == 12
@@ -128,7 +128,7 @@ def test_parse_search_results_add_block_wrapper():
       </body>
     </html>
     """
-    parser = ExtToParser(base_url="https://extto.com")
+    parser = ExtToParser(base_url="https://ext.to")
     items = parser.parse_search_results(sample_html)
 
     assert len(items) == 1
@@ -164,7 +164,7 @@ def test_parse_search_results_malformed_rows():
       </body>
     </html>
     """
-    parser = ExtToParser(base_url="https://extto.com")
+    parser = ExtToParser(base_url="https://ext.to")
     items = parser.parse_search_results(sample_html)
 
     # Empty row ignored, valid row extracted

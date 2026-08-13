@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     port: int = 8000
     host: str = "0.0.0.0"
     api_key: Optional[str] = None
-    ext_domain: str = "https://extto.com"
+    ext_domain: str = "https://ext.to"
     cache_ttl_minutes: int = 60
     db_path: str = "cache.db"
     headless: bool = True

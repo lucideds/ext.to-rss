@@ -20,20 +20,76 @@ Self-contained proxy service that scrapes **ext.to** (bypassing Cloudflare prote
 
 ## Quick Start
 
-### Option A: Running with Docker (Pre-built Image from GHCR)
+### Option A: Running with Docker Compose (Recommended)
+
+1. Create a `docker-compose.yml` file (or use the one included in this repository):
+
+```yaml
+services:
+  ext-to-rss:
+    image: ghcr.io/lucideds/ext.to-rss:latest
+    container_name: ext-to-rss
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - EXT_DOMAIN=https://ext.to
+      - DB_PATH=/app/data/cache.db
+      - CACHE_TTL_MINUTES=60
+      - HEADLESS=true
+      - MAX_MAGNETS_PER_QUERY=25
+      # - API_KEY=your_secret_api_key
+      # - FLARESOLVERR_URL=http://flaresolverr:8191/v1
+    volumes:
+      - ./data:/app/data
+```
+
+2. Start the service:
+
+```bash
+# Start in background
+docker compose up -d
+
+# View live logs
+docker compose logs -f
+
+# Stop the service
+docker compose down
+```
+
+---
+
+### Environment Variables
+
+Configure the service via environment variables in `docker-compose.yml` or a `.env` file:
+
+| Variable | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `PORT` | Integer | `8000` | Port for the Uvicorn HTTP server. |
+| `HOST` | String | `0.0.0.0` | Host IP address to bind to. |
+| `API_KEY` | String | *(Optional / None)* | Secret API key to require on `/api` and `/rss` requests (via `?apikey=...` or header). |
+| `EXT_DOMAIN` | String | `https://ext.to` | ext.to mirror domain (`https://ext.to`, `https://extto.com`, `https://ext2.to`). |
+| `DB_PATH` | String | `cache.db` (`/app/data/cache.db` in Docker) | File path for persistent SQLite cache. |
+| `CACHE_TTL_MINUTES` | Integer | `60` | Duration (in minutes) search results and resolved magnets remain cached. |
+| `HEADLESS` | Boolean | `true` | Run Playwright Chromium in headless mode. |
+| `MAX_MAGNETS_PER_QUERY` | Integer | `25` | Max number of magnet links to dynamically resolve per search query. |
+| `FLARESOLVERR_URL` | String | *(Optional / None)* | URL of an external FlareSolverr instance if used for Cloudflare clearance. |
+
+---
+
+### Option B: Running with Docker CLI (Pre-built Image)
 
 ```bash
 docker run -d \
   --name ext-to-rss \
   -p 8000:8000 \
+  -v $(pwd)/data:/app/data \
+  -e DB_PATH=/app/data/cache.db \
+  -e EXT_DOMAIN=https://ext.to \
   --restart unless-stopped \
   ghcr.io/lucideds/ext.to-rss:latest
-```
-
-### Option B: Running with Docker Compose
-
-```bash
-docker-compose up -d --build
 ```
 
 ---

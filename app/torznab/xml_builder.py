@@ -44,7 +44,7 @@ def build_torznab_feed_xml(items: List[TorrentItem], title: str = "ext.to Torzna
     channel = ET.SubElement(rss, "channel")
     ET.SubElement(channel, "title").text = title
     ET.SubElement(channel, "description").text = "Torznab torrent feed generated from ext.to search"
-    ET.SubElement(channel, "link").text = "https://extto.com"
+    ET.SubElement(channel, "link").text = "https://ext.to"
     ET.SubElement(channel, "language").text = "en-us"
 
     for item in items:

@@ -38,7 +38,7 @@ def test_build_caps_xml():
 def test_build_torznab_feed_xml_full_item():
     item = TorrentItem(
         title="Ubuntu 24.04 Desktop iso",
-        details_url="https://extto.com/ubuntu-24-04-123/",
+        details_url="https://ext.to/ubuntu-24-04-123/",
         magnet_link="magnet:?xt=urn:btih:1234567890abcdef1234567890abcdef12345678&dn=Ubuntu",
         infohash="1234567890ABCDEF1234567890ABCDEF12345678",
         size_bytes=4800000000,
@@ -88,7 +88,7 @@ def test_build_torznab_feed_xml_full_item():
 def test_build_torznab_feed_xml_fallback_urls():
     item = TorrentItem(
         title="Sample Release",
-        details_url="https://extto.com/sample-123/",
+        details_url="https://ext.to/sample-123/",
         magnet_link=None,
         infohash=None,
         size_bytes=0,
@@ -100,10 +100,10 @@ def test_build_torznab_feed_xml_fallback_urls():
     rss_item = root.find("channel/item")
 
     # When magnet is missing, link should fallback to details_url
-    assert rss_item.find("link").text == "https://extto.com/sample-123/"
+    assert rss_item.find("link").text == "https://ext.to/sample-123/"
     assert rss_item.find("guid").attrib["isPermaLink"] == "true"
     enclosure = rss_item.find("enclosure")
-    assert enclosure.attrib["url"] == "https://extto.com/sample-123/"
+    assert enclosure.attrib["url"] == "https://ext.to/sample-123/"
     # Min length fallback is 1024
     assert enclosure.attrib["length"] == "1024"
 
@@ -128,7 +128,7 @@ def test_build_torznab_feed_xml_fallback_urls():
 def test_build_rss_feed_xml():
     item = TorrentItem(
         title="Linux Mint 21 ISO",
-        details_url="https://extto.com/mint-21/",
+        details_url="https://ext.to/mint-21/",
         magnet_link="magnet:?xt=urn:btih:ABCDEF&dn=Mint",
         infohash="ABCDEF",
         size_bytes=2500000000,
@@ -146,7 +146,7 @@ def test_build_rss_feed_xml():
 
     rss_item = channel.find("item")
     assert rss_item.find("title").text == "Linux Mint 21 ISO"
-    assert rss_item.find("link").text == "https://extto.com/mint-21/"
+    assert rss_item.find("link").text == "https://ext.to/mint-21/"
 
     enclosure = rss_item.find("enclosure")
     assert enclosure is not None

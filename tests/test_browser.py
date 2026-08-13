@@ -21,7 +21,7 @@ def test_is_cloudflare_challenge():
 
 @pytest.mark.anyio
 async def test_resolve_magnet_for_item_success():
-    scraper = ExtToScraper(base_url="https://extto.com")
+    scraper = ExtToScraper(base_url="https://ext.to")
 
     html_response = """
     <html>
@@ -52,7 +52,7 @@ async def test_resolve_magnet_for_item_success():
         mock_session.post.return_value = mock_post_resp
 
         magnet, infohash = await scraper.resolve_magnet_for_item(
-            details_url="https://extto.com/test-torrent-999/",
+            details_url="https://ext.to/test-torrent-999/",
             torrent_id=999
         )
 
@@ -71,7 +71,7 @@ async def test_resolve_magnet_for_item_success():
 
 @pytest.mark.anyio
 async def test_resolve_magnet_for_item_failure():
-    scraper = ExtToScraper(base_url="https://extto.com")
+    scraper = ExtToScraper(base_url="https://ext.to")
 
     # Return empty HTML
     mock_get_resp = MagicMock()
@@ -83,7 +83,7 @@ async def test_resolve_magnet_for_item_failure():
         mock_session.get.return_value = mock_get_resp
 
         magnet, infohash = await scraper.resolve_magnet_for_item(
-            details_url="https://extto.com/test-torrent-999/",
+            details_url="https://ext.to/test-torrent-999/",
             torrent_id=999
         )
 
@@ -93,11 +93,11 @@ async def test_resolve_magnet_for_item_failure():
 
 @pytest.mark.anyio
 async def test_fetch_with_playwright_exception_resilience():
-    scraper = ExtToScraper(base_url="https://extto.com")
+    scraper = ExtToScraper(base_url="https://ext.to")
 
     with patch("app.scraper.browser.async_playwright") as mock_playwright:
         mock_playwright.side_effect = Exception("Chromium launch timeout")
         content, base = await scraper._fetch_with_playwright("/browse/?q=test")
         assert content is None
-        assert base == "https://extto.com"
+        assert base == "https://ext.to"
 

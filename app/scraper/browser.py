@@ -21,7 +21,7 @@ class ExtToScraper:
 
     def __init__(
         self,
-        base_url: str = "https://extto.com",
+        base_url: str = "https://ext.to",
         headless: bool = True,
         timeout: int = 30,
         flaresolverr_url: Optional[str] = None,
@@ -35,8 +35,8 @@ class ExtToScraper:
         self.parser = ExtToParser(base_url=self.base_url)
         self.mirror_domains = [
             self.base_url,
-            "https://extto.com",
             "https://ext.to",
+            "https://extto.com",
             "https://ext2.to",
         ]
         self._browser_sem = asyncio.Semaphore(1)
