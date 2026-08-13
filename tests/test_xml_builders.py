@@ -1,9 +1,16 @@
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from app.scraper.models import TorrentItem
-from app.torznab.xml_builder import build_caps_xml, build_torznab_feed_xml
+from app.torznab.xml_builder import build_caps_xml, build_torznab_feed_xml, build_torznab_error_xml
 from app.rss.feed_builder import build_rss_feed_xml
 from app.torznab.categories import map_cat_to_torznab, get_all_categories_xml, TORZNAB_CATEGORIES
+
+
+def test_build_torznab_error_xml():
+    err_xml = build_torznab_error_xml(code=100, description="Invalid or missing API key.")
+    assert "<?xml" in err_xml
+    assert '<error code="100" description="Invalid or missing API key."/>' in err_xml
+
 
 
 def test_build_caps_xml():

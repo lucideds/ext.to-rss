@@ -26,6 +26,13 @@ def build_caps_xml(site_name: str = "ext.to RSS / Torznab") -> str:
     return xml_str
 
 
+def build_torznab_error_xml(code: int, description: str) -> str:
+    """Generate standard Torznab XML error document for Prowlarr/Sonarr/Radarr."""
+    safe_description = html_escape.escape(description)
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<error code="{code}" description="{safe_description}"/>'
+
+
+
 def build_torznab_feed_xml(items: List[TorrentItem], title: str = "ext.to Torznab Feed") -> str:
     """Build standard Torznab XML feed containing torrent items and torznab:attr elements."""
     rss = ET.Element("rss", {

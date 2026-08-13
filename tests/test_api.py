@@ -10,7 +10,9 @@ client = TestClient(app)
 def test_health_endpoint():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["database"] == "connected"
 
 
 def test_root_landing_page():
@@ -93,16 +95,36 @@ def test_torznab_api_pagination():
 
 def test_api_key_authentication():
     with patch.object(settings, "api_key", "secret_pass_123"):
-        # Without key should return 401
+        # Without key should return 401 with Torznab XML error
         res_unauth = client.get("/api?t=caps")
         assert res_unauth.status_code == 401
-        assert res_unauth.json()["detail"] == "Invalid or missing API key."
+        assert "application/xml" in res_unauth.headers["content-type"]
+        assert '<error code="100"' in res_unauth.text
+        assert 'description="Invalid or missing API key."' in res_unauth.text
 
-        # Invalid key should return 401
+        # Invalid key should return 401 with Torznab XML error
         res_bad = client.get("/api?t=caps&apikey=wrongkey")
         assert res_bad.status_code == 401
+        assert "application/xml" in res_bad.headers["content-type"]
+        assert '<error code="100"' in res_bad.text
 
-        # Valid key should succeed
+        # Valid key via query param apikey
         res_valid = client.get("/api?t=caps&apikey=secret_pass_123")
         assert res_valid.status_code == 200
         assert "<caps>" in res_valid.text
+
+        # Valid key via query param api_key alias
+        res_alias = client.get("/api?t=caps&api_key=secret_pass_123")
+        assert res_alias.status_code == 200
+        assert "<caps>" in res_alias.text
+
+        # Valid key via X-Api-Key header
+        res_header = client.get("/api?t=caps", headers={"X-Api-Key": "secret_pass_123"})
+        assert res_header.status_code == 200
+        assert "<caps>" in res_header.text
+
+        # Valid key via Authorization Bearer header
+        res_bearer = client.get("/api?t=caps", headers={"Authorization": "Bearer secret_pass_123"})
+        assert res_bearer.status_code == 200
+        assert "<caps>" in res_bearer.text
+

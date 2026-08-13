@@ -89,3 +89,15 @@ async def test_resolve_magnet_for_item_failure():
 
         assert magnet is None
         assert infohash is None
+
+
+@pytest.mark.anyio
+async def test_fetch_with_playwright_exception_resilience():
+    scraper = ExtToScraper(base_url="https://extto.com")
+
+    with patch("app.scraper.browser.async_playwright") as mock_playwright:
+        mock_playwright.side_effect = Exception("Chromium launch timeout")
+        content, base = await scraper._fetch_with_playwright("/browse/?q=test")
+        assert content is None
+        assert base == "https://extto.com"
+

@@ -29,9 +29,15 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 # Copy application source code
 COPY . .
+RUN mkdir -p /app/data
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://localhost:8000/health || exit 1
 
 # Expose port
 EXPOSE 8000
 
 # Run Uvicorn ASGI server
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+

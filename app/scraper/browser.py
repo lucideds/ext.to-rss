@@ -39,6 +39,7 @@ class ExtToScraper:
             "https://ext.to",
             "https://ext2.to",
         ]
+        self._browser_sem = asyncio.Semaphore(1)
 
     async def search(self, query: str, page: int = 1, category: Optional[str] = None, max_magnets: int = 25) -> List[TorrentItem]:
         """Search ext.to for a query string and return parsed TorrentItem list with magnet links."""
@@ -55,11 +56,16 @@ class ExtToScraper:
         # 2. If curl_cffi was blocked by Cloudflare, fall back to Playwright stealth browser
         if not html or self._is_cloudflare_challenge(html):
             logger.info("Cloudflare Turnstile challenge detected. Launching Playwright Stealth fallback...")
-            html, current_base = await self._fetch_with_playwright(path)
+            try:
+                html, current_base = await self._fetch_with_playwright(path)
+            except Exception as e:
+                logger.error(f"Playwright fallback encountered an unexpected error: {e}")
+                html = None
 
         if not html:
             logger.error("Failed to fetch ext.to search results HTML from all backends.")
             return []
+
 
         # Update parser base domain
         self.parser.base_url = current_base
@@ -221,35 +227,41 @@ class ExtToScraper:
     async def _fetch_with_playwright(self, path: str) -> Tuple[Optional[str], str]:
         """Fallback Playwright stealth scraper for Cloudflare Turnstile pages."""
         target_url = f"{self.base_url}{path}"
-        async with async_playwright() as p:
-            launch_options = {
-                "headless": self.headless,
-                "ignore_default_args": ["--enable-automation"],
-                "args": [
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                ],
-            }
-
+        async with self._browser_sem:
             try:
-                browser = await p.chromium.launch(**launch_options, channel="chrome")
-            except Exception:
-                browser = await p.chromium.launch(**launch_options)
+                async with async_playwright() as p:
+                    launch_options = {
+                        "headless": self.headless,
+                        "ignore_default_args": ["--enable-automation"],
+                        "args": [
+                            "--no-sandbox",
+                            "--disable-setuid-sandbox",
+                            "--disable-blink-features=AutomationControlled",
+                            "--disable-dev-shm-usage",
+                        ],
+                    }
 
-            try:
-                context = await browser.new_context(viewport={"width": 1920, "height": 1080})
-                page = await context.new_page()
-                await Stealth().apply_stealth_async(page)
+                    try:
+                        browser = await p.chromium.launch(**launch_options, channel="chrome")
+                    except Exception:
+                        browser = await p.chromium.launch(**launch_options)
 
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
-                await asyncio.sleep(2.0)
+                    try:
+                        context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+                        page = await context.new_page()
+                        await Stealth().apply_stealth_async(page)
 
-                content = await page.content()
-                return content, self.base_url
-            finally:
-                await browser.close()
+                        await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                        await asyncio.sleep(2.0)
+
+                        content = await page.content()
+                        return content, self.base_url
+                    finally:
+                        await browser.close()
+            except Exception as e:
+                logger.error(f"Playwright navigation failed for {target_url}: {e}")
+                return None, self.base_url
+
 
     def _is_cloudflare_challenge(self, html: str) -> bool:
         """Detect if HTML is a Cloudflare interstitial or Turnstile challenge."""

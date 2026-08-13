@@ -127,3 +127,18 @@ async def test_cache_prune_expired():
         if os.path.exists(db_path):
             os.remove(db_path)
 
+
+@pytest.mark.anyio
+async def test_cache_health_check():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        cache_db = CacheDatabase(db_path=db_path, ttl_seconds=3600)
+        is_healthy = await cache_db.check_health()
+        assert is_healthy is True
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
