@@ -6,7 +6,7 @@ import re
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 from curl_cffi import requests as cffi_requests
-from playwright.async_api import async_playwright
+from patchright.async_api import async_playwright
 from playwright_stealth import Stealth
 
 from .models import TorrentItem
@@ -214,7 +214,11 @@ class ExtToScraper:
                 html, current_base = retry_html, retry_base
 
         # 5. Give up: every backend is still behind the Cloudflare challenge.
-        if not html or self._is_cloudflare_challenge(html):
+        if (
+            not html
+            or self._is_cloudflare_challenge(html)
+            or not any(marker in html.lower() for marker in CONTENT_MARKERS)
+        ):
             logger.error("Failed to fetch ext.to search results HTML from all backends.")
             return []
 
@@ -382,7 +386,12 @@ class ExtToScraper:
 
                 resp = await loop.run_in_executor(None, _do_req)
                 mitigated = (resp.headers.get("cf-mitigated") or "").lower() == "challenge"
-                if resp.status_code == 200 and not mitigated and not self._is_cloudflare_challenge(resp.text):
+                if (
+                    resp.status_code == 200
+                    and not mitigated
+                    and not self._is_cloudflare_challenge(resp.text)
+                    and any(marker in resp.text.lower() for marker in CONTENT_MARKERS)
+                ):
                     logger.info(f"Successfully fetched search results from {domain} via curl_cffi!")
                     return resp.text, domain
                 if mitigated or self._is_cloudflare_challenge(resp.text):
@@ -398,54 +407,69 @@ class ExtToScraper:
         return None, self.base_url
 
     async def _fetch_with_flaresolverr(self, path: str) -> Tuple[Optional[str], str]:
-        """Fetch via an external FlareSolverr instance (Cloudflare clearance proxy)."""
+        """Fetch via FlareSolverr, trying every configured mirror."""
         if not self.flaresolverr_url:
             return None, self.base_url
 
-        target_url = f"{self.base_url}{path}"
         loop = asyncio.get_running_loop()
+        for domain in self._domains():
+            target_url = f"{domain}{path}"
+            payload = {
+                "cmd": "request.get",
+                "url": target_url,
+                "maxTimeout": max(60000, self.timeout * 1000),
+            }
+            if self.proxy_url:
+                payload["proxy"] = {"url": self.proxy_url}
 
-        payload = {"cmd": "request.get", "url": target_url, "maxTimeout": 60000}
-        if self.proxy_url:
-            payload["proxy"] = {"url": self.proxy_url}
+            def _do_req():
+                return cffi_requests.post(
+                    self.flaresolverr_url,
+                    json=payload,
+                    timeout=self.timeout + 30,
+                )
 
-        def _do_req():
-            return cffi_requests.post(
-                self.flaresolverr_url,
-                json=payload,
-                timeout=self.timeout + 30,
-            )
+            try:
+                resp = await loop.run_in_executor(None, _do_req)
+                if resp.status_code != 200:
+                    logger.warning(f"FlareSolverr returned HTTP {resp.status_code} for {domain}")
+                    continue
 
-        resp = await loop.run_in_executor(None, _do_req)
-        if resp.status_code != 200:
-            logger.warning(f"FlareSolverr returned HTTP {resp.status_code}")
-            return None, self.base_url
+                data = resp.json()
+                if data.get("status") != "ok" or not data.get("solution"):
+                    logger.warning(f"FlareSolverr did not solve {domain}: {data.get('message')}")
+                    continue
 
-        data = resp.json()
-        if data.get("status") != "ok" or not data.get("solution"):
-            logger.warning(f"FlareSolverr did not solve challenge: {data.get('message')}")
-            return None, self.base_url
+                solution = data["solution"]
+                html = solution.get("response")
+                final_url = solution.get("url") or target_url
+                parsed = urllib.parse.urlparse(final_url)
+                solved_domain = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else domain
+                cookies: Dict[str, str] = {
+                    str(cookie.get("name")): str(cookie.get("value"))
+                    for cookie in solution.get("cookies", [])
+                    if isinstance(cookie, dict) and cookie.get("name") and cookie.get("value")
+                }
+                solver_ua = solution.get("userAgent")
+                if isinstance(solver_ua, str) and solver_ua:
+                    self._browser_user_agent = solver_ua
+                if cookies:
+                    await self._store_session_state(cookies)
+                if (
+                    not html
+                    or self._is_cloudflare_challenge(html)
+                    or not any(marker in html.lower() for marker in CONTENT_MARKERS)
+                ):
+                    logger.warning(f"FlareSolverr response for {domain} lacks torrent content")
+                    continue
 
-        solution = data["solution"]
-        html = solution.get("response")
-        final_url = solution.get("url") or target_url
-        parsed = urllib.parse.urlparse(final_url)
-        domain = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else self.base_url
+                self._working_domain = solved_domain
+                logger.info(f"Successfully fetched search results from {solved_domain} via FlareSolverr!")
+                return html, solved_domain
+            except Exception as e:
+                logger.warning(f"FlareSolverr request for {domain} failed: {e}")
 
-        # FlareSolverr returns the clearance in solution.cookies - keep it for curl_cffi.
-        cookies: Dict[str, str] = {
-            str(c.get("name")): str(c.get("value"))
-            for c in solution.get("cookies", [])
-            if isinstance(c, dict) and c.get("name") and c.get("value")
-        }
-        if cookies:
-            await self._store_session_state(cookies)
-
-        if not html or self._is_cloudflare_challenge(html):
-            return None, domain
-
-        logger.info(f"Successfully fetched search results from {domain} via FlareSolverr!")
-        return html, domain
+        return None, self.base_url
 
     def _launch_options(self) -> Dict:
         """Chromium launch options (kept Chromium rather than the headless shell so
@@ -469,13 +493,41 @@ class ExtToScraper:
         return options
 
     async def _new_context(self, browser):
-        """Create a context that reuses harvested clearance cookies and the shared UA."""
-        return await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=self.effective_user_agent,
-            locale="en-US",
-            timezone_id="Europe/London",
-        )
+        """Create a context that reuses clearance cookies without a fake UA.
+
+        Forcing a hard-coded Chrome UA makes the browser fingerprint disagree with
+        its actual Chromium build. Let Chromium report its native UA unless the
+        operator explicitly configured one or an external solver supplied one.
+        """
+        options = {
+            "viewport": {"width": 1920, "height": 1080},
+            "locale": "en-US",
+            "timezone_id": "Europe/London",
+        }
+        if self.user_agent or self._browser_user_agent:
+            options["user_agent"] = self.effective_user_agent
+        return await browser.new_context(**options)
+
+    async def _add_context_cookies(self, context) -> None:
+        """Install harvested cookies for every mirror before navigation."""
+        if not self._cookies:
+            return
+        cookies = []
+        for domain in self._domains():
+            hostname = urllib.parse.urlparse(domain).hostname
+            if not hostname:
+                continue
+            cookies.extend(
+                {
+                    "name": name,
+                    "value": value,
+                    "domain": hostname,
+                    "path": "/",
+                }
+                for name, value in self._cookies.items()
+            )
+        if cookies:
+            await context.add_cookies(cookies)
 
     async def _await_challenge_resolution(self, page) -> Optional[str]:
         """Poll a navigating page until Cloudflare clears it (or we run out of time).
@@ -496,8 +548,9 @@ class ExtToScraper:
                 logger.warning(f"Lost the page while waiting for the challenge: {e}")
                 return None
             if not self._is_cloudflare_challenge(html):
-                return html
-
+                if any(marker in html.lower() for marker in CONTENT_MARKERS):
+                    return html
+                logger.debug("Browser returned a non-challenge page without torrent content; waiting")
             now = time.monotonic()
             if (
                 self.solve_challenge
@@ -555,12 +608,7 @@ class ExtToScraper:
             return False
 
     async def _fetch_with_playwright(self, path: str) -> Tuple[Optional[str], str]:
-        """Fallback Playwright stealth scraper for Cloudflare Turnstile pages.
-
-        Iterates all mirror domains within a single browser session, waits for the
-        challenge to clear, and harvests the resulting clearance cookies for the
-        curl_cffi fast path.
-        """
+        """Fetch through one stealth browser session across all mirror domains."""
         async with self._browser_sem:
             try:
                 async with async_playwright() as p:
@@ -578,20 +626,18 @@ class ExtToScraper:
                             context = None
                             try:
                                 context = await self._new_context(browser)
-                                if self._cookies:
-                                    await context.add_cookies([
-                                        {
-                                            "name": name,
-                                            "value": value,
-                                            "domain": urllib.parse.urlparse(domain).hostname or "ext.to",
-                                            "path": "/",
-                                        }
-                                        for name, value in self._cookies.items()
-                                    ])
+                                await self._add_context_cookies(context)
                                 page = await context.new_page()
                                 await Stealth().apply_stealth_async(page)
-
-                                await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                                await page.add_init_script(
+                                    "Object.defineProperty(navigator, 'webdriver', "
+                                    "{get: () => undefined});"
+                                )
+                                await page.goto(
+                                    target_url,
+                                    wait_until="domcontentloaded",
+                                    timeout=self.timeout * 1000,
+                                )
 
                                 if not self._browser_user_agent:
                                     try:
@@ -600,20 +646,16 @@ class ExtToScraper:
                                         pass
 
                                 content = await self._await_challenge_resolution(page)
-
                                 try:
                                     cookies: Dict[str, str] = {
-                                        str(c["name"]): str(c["value"])
-                                        for c in await context.cookies()
-                                        if c.get("name") and c.get("value")
+                                        str(cookie["name"]): str(cookie["value"])
+                                        for cookie in await context.cookies()
+                                        if cookie.get("name") and cookie.get("value")
                                     }
                                     await self._store_session_state(cookies)
                                 except Exception as e:
                                     logger.debug(f"Could not read browser cookies: {e}")
 
-                                # Cloudflare usually refreshes the page itself once the
-                                # widget is solved; if it did not, re-request now that we
-                                # hold cf_clearance.
                                 if (
                                     content
                                     and self._is_cloudflare_challenge(content)
@@ -621,12 +663,18 @@ class ExtToScraper:
                                 ):
                                     logger.info("Clearance obtained but page not refreshed - re-requesting")
                                     try:
-                                        await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                                        await page.reload(
+                                            wait_until="domcontentloaded",
+                                            timeout=self.timeout * 1000,
+                                        )
                                         content = await self._await_challenge_resolution(page)
                                     except Exception as e:
                                         logger.debug(f"Re-request after clearance failed: {e}")
-
-                                if content and not self._is_cloudflare_challenge(content):
+                                if (
+                                    content
+                                    and not self._is_cloudflare_challenge(content)
+                                    and any(marker in content.lower() for marker in CONTENT_MARKERS)
+                                ):
                                     self._working_domain = domain
                                     logger.info(f"Successfully fetched search results from {domain} via Playwright!")
                                     return content, domain
@@ -639,7 +687,6 @@ class ExtToScraper:
                                         await context.close()
                                     except Exception:
                                         pass
-
                         return None, self.base_url
                     finally:
                         try:

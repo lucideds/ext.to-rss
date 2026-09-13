@@ -9,8 +9,7 @@ Self-contained proxy service that scrapes **ext.to** (bypassing Cloudflare prote
 
 ## Features
 
-- **Prowlarr / Sonarr / Radarr Integration**: Full Torznab API implementation (`t=caps`, `t=search`, `t=tvsearch`, `t=movie`).
-- **Cloudflare & Anti-Bot Bypass**: High-performance `curl_cffi` Chrome TLS impersonation engine with automatic Playwright stealth browser fallback.
+- **Cloudflare & Anti-Bot Bypass**: `curl_cffi` Chrome TLS impersonation with a Patchright undetected Chromium fallback, optional FlareSolverr integration, and persistent clearance-cookie reuse.
 - **HMAC SHA256 Magnet & Infohash Resolution**: Automatically resolves full magnet URIs and 40-character SHA1 infohashes.
 - **SQLite Persistent Caching**: Caches search queries and magnet metadata to prevent IP bans and minimize request overhead.
 - **Category Mapping**: Maps ext.to categories to standard Torznab category IDs (Movies=2000, TV=5000, Books=7000, Audio=3000, etc.).
@@ -90,7 +89,10 @@ Configure the service via environment variables in `docker-compose.yml` or a `.e
 
 ext.to sits behind a Cloudflare **managed challenge** (`cf-mitigated: challenge`). The
 service tries, in order: `curl_cffi` TLS impersonation → FlareSolverr (if configured) →
-Playwright stealth browser. When a search returns an empty feed, read the container logs:
+Patchright undetected Chromium. The browser fallback keeps one real browser context per
+mirror, applies stealth before navigation, waits for the managed challenge, and persists
+clearance cookies for later HTTP requests. When a search returns an empty feed, read the
+container logs:
 
 - `Domain https://… is behind a Cloudflare challenge (HTTP 403, cf-mitigated=True)` —
   the fast path is blocked. Any clearance cookie harvested by the browser is persisted
