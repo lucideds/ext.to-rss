@@ -60,6 +60,27 @@ When modifying this codebase, AI agents MUST strictly adhere to the following ru
 3. **Async Database Operations**: Always use `aiosqlite` in `app/cache/db.py`. Do not introduce blocking synchronous `sqlite3` calls on main event loops.
 4. **Preserve TLS Impersonation Fallback Order**: Primary fetch MUST attempt fast `curl_cffi` TLS impersonation first (`impersonate="chrome120"`). Playwright Chromium stealth should only launch if CloudflareTurnstile challenges are detected.
 
+### A2. Container / browser invariants (do not regress)
+1. **Fonts are mandatory.** Chromium's Skia backend aborts the whole browser process
+   (`FATAL:third_party/skia/src/ports/SkFontMgr_FontConfigInterface.cpp Not implemented.`,
+   signal SIGTRAP) when the image ships no fonts, so the Playwright fallback silently dies
+   (and leaves 250MB core dumps per crash). The Dockerfile installs `fontconfig`,
+   `fonts-dejavu-core`, `fonts-liberation`, `fonts-unifont` — keep them and keep
+   `ulimits: core: 0` in compose.
+2. **`PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`.** Browsers are installed outside `$HOME`
+   during the build because the runtime user (`appuser`) cannot read `/root/.cache`. If this
+   moves back under `$HOME`, every launch fails with `Executable doesn't exist at
+   /home/appuser/.cache/ms-playwright/...`.
+3. **Wait for the challenge, don't read the page immediately.** `page.content()` right after
+   `domcontentloaded` always returns the interstitial; `_await_challenge_resolution()` polls
+   for `CHALLENGE_WAIT_SECONDS`. Harvested cookies (`cf_clearance`, `cf_*`) must be persisted
+   via `_store_session_state()` so the curl_cffi fast path can reuse them.
+4. **Keep `_is_cloudflare_challenge` precise.** Generic strings like `cf-turnstile` or
+   `challenges.cloudflare.com` appear on healthy pages that merely embed Turnstile, so they
+   are weak signals: they only count as a challenge when the page has no content markers
+   (`<table`, `/torrent/`, ...). Use the `cf-mitigated: challenge` response header for the
+   HTTP path.
+
 ### B. Verification & Testing Directive
 - **Never declare victory without running test commands**. Before marking any task complete, agents MUST run the full test suite and confirm 100% pass:
   ```powershell
