@@ -1,7 +1,6 @@
 import html as html_escape
 from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
 from typing import List
 from app.scraper.models import TorrentItem
 from .categories import get_all_categories_xml, map_cat_to_torznab
@@ -64,7 +63,7 @@ def build_torznab_feed_xml(items: List[TorrentItem], title: str = "ext.to Torzna
         # Enclosure (Required by Prowlarr/Torznab parsers)
         ET.SubElement(entry, "enclosure", {
             "url": download_url,
-            "length": str(max(item.size_bytes, 1024)),
+            "length": str(item.size_bytes),
             "type": "application/x-bittorrent",
         })
 
@@ -78,7 +77,7 @@ def build_torznab_feed_xml(items: List[TorrentItem], title: str = "ext.to Torzna
 
         # Torznab attributes
         ET.SubElement(entry, "torznab:attr", {"name": "category", "value": str(cat_id)})
-        ET.SubElement(entry, "torznab:attr", {"name": "size", "value": str(max(item.size_bytes, 1024))})
+        ET.SubElement(entry, "torznab:attr", {"name": "size", "value": str(item.size_bytes)})
         ET.SubElement(entry, "torznab:attr", {"name": "seeders", "value": str(item.seeders)})
         ET.SubElement(entry, "torznab:attr", {"name": "leechers", "value": str(item.leechers)})
         ET.SubElement(entry, "torznab:attr", {"name": "peers", "value": str(item.seeders + item.leechers)})
@@ -91,7 +90,5 @@ def build_torznab_feed_xml(items: List[TorrentItem], title: str = "ext.to Torzna
         if item.infohash:
             ET.SubElement(entry, "torznab:attr", {"name": "infohash", "value": item.infohash})
 
-    # Return formatted XML string
-    rough_string = ET.tostring(rss, encoding="utf-8")
-    reparsed = minidom.parseString(rough_string)
-    return reparsed.toprettyxml(indent="  ")
+    # Return serialized XML string
+    return ET.tostring(rss, encoding="UTF-8", xml_declaration=True).decode("utf-8")

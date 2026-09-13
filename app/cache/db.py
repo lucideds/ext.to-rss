@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import asyncio
 import logging
 from typing import Optional, List, Dict
 import aiosqlite
@@ -15,6 +16,7 @@ class CacheDatabase:
         self.db_path = db_path
         self.ttl_seconds = ttl_seconds
         self._initialized = False
+        self._init_lock = asyncio.Lock()
 
     async def _connect(self) -> aiosqlite.Connection:
         """Create and configure a connection with WAL mode and busy timeout."""
@@ -70,23 +72,26 @@ class CacheDatabase:
             return False
 
     async def prune_expired(self):
-        """Remove expired entries from query_cache table."""
+        """Remove expired entries from query_cache and magnet_cache tables."""
         cutoff = int(time.time()) - self.ttl_seconds
         try:
             db = await self._connect()
             try:
                 await db.execute("DELETE FROM query_cache WHERE created_at < ?", (cutoff,))
+                await db.execute("DELETE FROM magnet_cache WHERE created_at < ?", (cutoff,))
                 await db.commit()
-                logger.debug("Pruned expired query_cache entries.")
+                logger.debug("Pruned expired cache entries.")
             finally:
                 await db.close()
         except Exception as e:
             logger.warning(f"Failed pruning expired cache: {e}")
 
     async def ensure_db(self):
-        """Ensure database tables exist (idempotent, runs once per instance)."""
+        """Ensure database tables exist (idempotent, concurrency-safe)."""
         if not self._initialized:
-            await self.init_db()
+            async with self._init_lock:
+                if not self._initialized:
+                    await self.init_db()
 
 
     async def get_query_cache(self, query_key: str) -> Optional[List[Dict]]:
@@ -127,17 +132,20 @@ class CacheDatabase:
             await db.close()
 
     async def get_magnet_cache(self, torrent_id: int) -> Optional[tuple[str, Optional[str]]]:
-        """Retrieve cached magnet link for torrent_id."""
+        """Retrieve cached magnet link for torrent_id if within TTL."""
         await self.ensure_db()
+        now = int(time.time())
         db = await self._connect()
         try:
             async with db.execute(
-                "SELECT magnet_link, infohash FROM magnet_cache WHERE torrent_id = ?",
+                "SELECT magnet_link, infohash, created_at FROM magnet_cache WHERE torrent_id = ?",
                 (torrent_id,)
             ) as cursor:
                 row = await cursor.fetchone()
                 if row:
-                    return row[0], row[1]
+                    if now - row[2] < self.ttl_seconds:
+                        return row[0], row[1]
+                    logger.debug(f"Magnet cache EXPIRED for torrent_id {torrent_id}")
         finally:
             await db.close()
         return None

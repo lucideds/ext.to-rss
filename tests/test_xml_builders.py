@@ -104,8 +104,8 @@ def test_build_torznab_feed_xml_fallback_urls():
     assert rss_item.find("guid").attrib["isPermaLink"] == "true"
     enclosure = rss_item.find("enclosure")
     assert enclosure.attrib["url"] == "https://ext.to/sample-123/"
-    # Min length fallback is 1024
-    assert enclosure.attrib["length"] == "1024"
+    # Size must be reported honestly (0 when unknown, no fabricated minimum)
+    assert enclosure.attrib["length"] == "0"
 
     attrs = {elem.attrib["name"]: elem.attrib["value"] for elem in rss_item.findall("{http://torznab.com/schemas/2015/feed}attr")}
     assert "magneturl" not in attrs
@@ -158,7 +158,8 @@ def test_build_rss_feed_xml():
     assert "Size: 2.5 GB" in desc
     assert "Seeders: 100 | Leechers: 5" in desc
     assert "Infohash: ABCDEF" in desc
-    assert '<a href="magnet:?xt=urn:btih:ABCDEF&dn=Mint">Download Magnet</a>' in desc
+    # Magnet URL must be HTML-escaped inside the description anchor
+    assert '<a href="magnet:?xt=urn:btih:ABCDEF&amp;dn=Mint">Download Magnet</a>' in desc
 
 
 def test_map_cat_to_torznab():
@@ -174,6 +175,15 @@ def test_map_cat_to_torznab():
     assert map_cat_to_torznab("XXX Adult") == 6000
     assert map_cat_to_torznab("Random") == 8000
     assert map_cat_to_torznab("") == 8000
+
+
+def test_map_cat_to_torznab_keyword_precedence():
+    # More specific keywords must win over generic ones regardless of order.
+    assert map_cat_to_torznab("TV Anime") == 5070        # anime beats tv
+    assert map_cat_to_torznab("TV Documentary") == 5080  # documentary beats tv/doc->books
+    assert map_cat_to_torznab("Documentary") == 5080     # no longer swallowed by "doc" -> Books
+    assert map_cat_to_torznab("XXX Movie") == 6000       # adult beats movie
+    assert map_cat_to_torznab("Doc Library") == 7000     # generic doc still maps to Books
 
 
 def test_get_all_categories_xml():

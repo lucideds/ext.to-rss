@@ -53,7 +53,17 @@ class ExtToScraper:
         # 1. Try fast curl_cffi Chrome TLS impersonation across mirror domains
         html, current_base = await self._fetch_with_curl_cffi(path)
 
-        # 2. If curl_cffi was blocked by Cloudflare, fall back to Playwright stealth browser
+        # 2. If configured, delegate Cloudflare clearance to a FlareSolverr instance
+        if (not html or self._is_cloudflare_challenge(html)) and self.flaresolverr_url:
+            logger.info("Attempting FlareSolverr fetch...")
+            try:
+                fs_html, fs_base = await self._fetch_with_flaresolverr(path)
+                if fs_html:
+                    html, current_base = fs_html, fs_base
+            except Exception as e:
+                logger.error(f"FlareSolverr fetch failed: {e}")
+
+        # 3. If still blocked by Cloudflare, fall back to local Playwright stealth browser
         if not html or self._is_cloudflare_challenge(html):
             logger.info("Cloudflare Turnstile challenge detected. Launching Playwright Stealth fallback...")
             try:
@@ -224,9 +234,48 @@ class ExtToScraper:
 
         return None, self.base_url
 
-    async def _fetch_with_playwright(self, path: str) -> Tuple[Optional[str], str]:
-        """Fallback Playwright stealth scraper for Cloudflare Turnstile pages."""
+    async def _fetch_with_flaresolverr(self, path: str) -> Tuple[Optional[str], str]:
+        """Fetch via an external FlareSolverr instance (Cloudflare clearance proxy)."""
+        if not self.flaresolverr_url:
+            return None, self.base_url
+
         target_url = f"{self.base_url}{path}"
+        loop = asyncio.get_running_loop()
+
+        def _do_req():
+            return cffi_requests.post(
+                self.flaresolverr_url,
+                json={"cmd": "request.get", "url": target_url, "maxTimeout": 60000},
+                timeout=self.timeout + 30,
+            )
+
+        resp = await loop.run_in_executor(None, _do_req)
+        if resp.status_code != 200:
+            logger.warning(f"FlareSolverr returned HTTP {resp.status_code}")
+            return None, self.base_url
+
+        data = resp.json()
+        if data.get("status") != "ok" or not data.get("solution"):
+            logger.warning(f"FlareSolverr did not solve challenge: {data.get('message')}")
+            return None, self.base_url
+
+        solution = data["solution"]
+        html = solution.get("response")
+        final_url = solution.get("url") or target_url
+        parsed = urllib.parse.urlparse(final_url)
+        domain = f"{parsed.scheme}://{parsed.netloc}" if parsed.netloc else self.base_url
+
+        if not html or self._is_cloudflare_challenge(html):
+            return None, domain
+
+        logger.info(f"Successfully fetched search results from {domain} via FlareSolverr!")
+        return html, domain
+
+    async def _fetch_with_playwright(self, path: str) -> Tuple[Optional[str], str]:
+        """Fallback Playwright stealth scraper for Cloudflare Turnstile pages.
+
+        Iterates all mirror domains within a single browser session.
+        """
         async with self._browser_sem:
             try:
                 async with async_playwright() as p:
@@ -247,19 +296,34 @@ class ExtToScraper:
                         browser = await p.chromium.launch(**launch_options)
 
                     try:
-                        context = await browser.new_context(viewport={"width": 1920, "height": 1080})
-                        page = await context.new_page()
-                        await Stealth().apply_stealth_async(page)
+                        seen = set()
+                        domains = [d for d in self.mirror_domains if not (d in seen or seen.add(d))]
 
-                        await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
-                        await asyncio.sleep(2.0)
+                        for domain in domains:
+                            target_url = f"{domain}{path}"
+                            try:
+                                context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+                                page = await context.new_page()
+                                await Stealth().apply_stealth_async(page)
 
-                        content = await page.content()
-                        return content, self.base_url
+                                await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                                await asyncio.sleep(2.0)
+
+                                content = await page.content()
+                                await context.close()
+
+                                if content and not self._is_cloudflare_challenge(content):
+                                    logger.info(f"Successfully fetched search results from {domain} via Playwright!")
+                                    return content, domain
+                                logger.warning(f"Playwright still challenged on {domain}")
+                            except Exception as e:
+                                logger.warning(f"Playwright navigation failed for {target_url}: {e}")
+
+                        return None, self.base_url
                     finally:
                         await browser.close()
             except Exception as e:
-                logger.error(f"Playwright navigation failed for {target_url}: {e}")
+                logger.error(f"Playwright launch failed: {e}")
                 return None, self.base_url
 
 

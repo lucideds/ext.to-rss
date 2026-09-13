@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
+import html as html_escape
 import xml.etree.ElementTree as ET
-from xml.dom import minidom
 from typing import List
 from app.scraper.models import TorrentItem
 
@@ -39,7 +39,8 @@ def build_rss_feed_xml(items: List[TorrentItem], feed_title: str = "ext.to RSS F
         if item.infohash:
             desc_text += f"Infohash: {item.infohash}<br/>"
         if item.magnet_link:
-            desc_text += f'<a href="{item.magnet_link}">Download Magnet</a>'
+            safe_magnet = html_escape.escape(item.magnet_link, quote=True)
+            desc_text += f'<a href="{safe_magnet}">Download Magnet</a>'
 
         ET.SubElement(entry, "description").text = desc_text
 
@@ -50,6 +51,5 @@ def build_rss_feed_xml(items: List[TorrentItem], feed_title: str = "ext.to RSS F
         pub_date = item.pub_date or datetime.now(timezone.utc)
         ET.SubElement(entry, "pubDate").text = pub_date.strftime("%a, %d %b %Y %H:%M:%S +0000")
 
-    rough_string = ET.tostring(rss, encoding="utf-8")
-    reparsed = minidom.parseString(rough_string)
-    return reparsed.toprettyxml(indent="  ")
+    # Return serialized XML string
+    return ET.tostring(rss, encoding="UTF-8", xml_declaration=True).decode("utf-8")

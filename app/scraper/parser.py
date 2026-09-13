@@ -138,9 +138,6 @@ class ExtToParser:
 
             if size_human != "0 B":
                 size_bytes = parse_size_to_bytes(size_human)
-            
-            if size_bytes == 0:
-                size_bytes = 1024 * 1024  # 1 MB fallback if size missing
 
             # Seeders & Leechers
             seeders = 0
@@ -158,7 +155,7 @@ class ExtToParser:
                 if leech_text:
                     leechers = int(leech_text)
 
-            # Age / Date
+            # Age / Date (None if unparseable; feed builders fall back to now())
             pub_date = None
             age_elem = row.select_one("span[title]")
             if age_elem and age_elem.get("title"):
@@ -166,9 +163,7 @@ class ExtToParser:
                 try:
                     pub_date = datetime.strptime(date_str, "%d %B %Y").replace(tzinfo=timezone.utc)
                 except Exception:
-                    pub_date = datetime.now(timezone.utc)
-            else:
-                pub_date = datetime.now(timezone.utc)
+                    pub_date = None
 
             return {
                 "title": title,

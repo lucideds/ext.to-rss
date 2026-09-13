@@ -66,6 +66,48 @@ async def test_cache_expiration():
 
 
 @pytest.mark.anyio
+async def test_magnet_cache_expiration():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        cache_db = CacheDatabase(db_path=db_path, ttl_seconds=10)
+        await cache_db.init_db()
+
+        # Insert expired and fresh magnet entries directly
+        now = int(time.time())
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "INSERT INTO magnet_cache (torrent_id, magnet_link, infohash, created_at) VALUES (?, ?, ?, ?)",
+                (111, "magnet:?xt=urn:btih:OLD", None, now - 100)
+            )
+            await db.execute(
+                "INSERT INTO magnet_cache (torrent_id, magnet_link, infohash, created_at) VALUES (?, ?, ?, ?)",
+                (222, "magnet:?xt=urn:btih:NEW", "NEWHASH", now)
+            )
+            await db.commit()
+
+        # Expired entry must not be served
+        assert await cache_db.get_magnet_cache(111) is None
+        # Fresh entry still served
+        fresh = await cache_db.get_magnet_cache(222)
+        assert fresh == ("magnet:?xt=urn:btih:NEW", "NEWHASH")
+
+        # Prune must remove expired magnet entries too
+        await cache_db.prune_expired()
+        async with aiosqlite.connect(db_path) as db:
+            async with db.execute("SELECT torrent_id FROM magnet_cache") as cursor:
+                remaining = [row[0] for row in await cursor.fetchall()]
+
+        assert 111 not in remaining
+        assert 222 in remaining
+
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+@pytest.mark.anyio
 async def test_cache_overwrite_and_ensure_db():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = tmp.name

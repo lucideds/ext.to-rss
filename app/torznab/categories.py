@@ -44,12 +44,22 @@ TORZNAB_CATEGORIES: Dict[int, str] = {
 
 
 def map_cat_to_torznab(cat_str: str) -> int:
-    """Map ext.to category string to standard Torznab category ID."""
+    """Map ext.to category string to standard Torznab category ID.
+
+    Checks are ordered most-specific-first: e.g. "Anime" must win over the
+    generic "TV" keyword and "XXX Movie" over the "Movie" keyword.
+    """
     if not cat_str:
         return 8000
-    
+
     cat_lower = cat_str.lower()
-    if "movie" in cat_lower:
+    if "xxx" in cat_lower or "adult" in cat_lower:
+        return 6000
+    elif "anime" in cat_lower:
+        return 5070
+    elif "documentar" in cat_lower:
+        return 5080
+    elif "movie" in cat_lower or "film" in cat_lower:
         return 2000
     elif "tv" in cat_lower or "show" in cat_lower or "episode" in cat_lower:
         return 5000
@@ -59,12 +69,8 @@ def map_cat_to_torznab(cat_str: str) -> int:
         return 1000
     elif "app" in cat_lower or "software" in cat_lower:
         return 4000
-    elif "book" in cat_lower or "doc" in cat_lower or "ebook" in cat_lower:
+    elif "book" in cat_lower or "ebook" in cat_lower or "doc" in cat_lower:
         return 7000
-    elif "anime" in cat_lower:
-        return 5070
-    elif "xxx" in cat_lower or "adult" in cat_lower:
-        return 6000
     return 8000
 
 

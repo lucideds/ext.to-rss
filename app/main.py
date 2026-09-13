@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 import secrets
@@ -67,11 +68,16 @@ app = FastAPI(
 async def torznab_http_exception_handler(request: Request, exc: HTTPException):
     """Return Torznab-compliant XML errors for /api and /caps routes."""
     if request.url.path.startswith("/api") or request.url.path.startswith("/caps"):
-        code = 100 if exc.status_code == status.HTTP_401_UNAUTHORIZED else 200
+        if exc.status_code == status.HTTP_401_UNAUTHORIZED:
+            code = 100  # Incorrect credentials
+        elif exc.status_code in (status.HTTP_400_BAD_REQUEST, status.HTTP_422_UNPROCESSABLE_ENTITY):
+            code = 201  # Incorrect parameter
+        else:
+            code = 300  # Generic error
         error_xml = build_torznab_error_xml(code=code, description=str(exc.detail))
         return Response(content=error_xml, status_code=exc.status_code, media_type="application/xml")
     return Response(
-        content=f'{{"detail":"{exc.detail}"}}',
+        content=json.dumps({"detail": str(exc.detail)}),
         status_code=exc.status_code,
         media_type="application/json"
     )
@@ -140,8 +146,9 @@ async def torznab_api(
     t: str = Query("search", description="Torznab search type (caps, search, tvsearch, movie)"),
     q: Optional[str] = Query(None, description="Search query string"),
     cat: Optional[str] = Query(None, description="Torznab category IDs comma separated"),
-    limit: Optional[int] = Query(50, description="Results limit"),
-    offset: Optional[int] = Query(0, description="Results offset"),
+    limit: Optional[int] = Query(50, ge=0, description="Results limit (max 100)"),
+    offset: Optional[int] = Query(0, ge=0, description="Results offset"),
+    page: int = Query(1, ge=1, description="Result page on the source site"),
     apikey: Optional[str] = Query(None, description="API key"),
     api_key: Optional[str] = Query(None, description="API key alias"),
     season: Optional[str] = Query(None, description="TV Season"),
@@ -178,8 +185,11 @@ async def torznab_api(
         # If query is empty, default search to current year
         search_query = str(datetime.now().year)
 
-    # Unified search query cache key
-    cache_key = f"query:{search_query}"
+    # Unified search query cache key (page 1 shares cache with the RSS endpoint)
+    if page > 1:
+        cache_key = f"query:{search_query}|page={page}"
+    else:
+        cache_key = f"query:{search_query}"
 
     # Check cache first
     cached_data = await cache_db.get_query_cache(cache_key)
@@ -188,7 +198,7 @@ async def torznab_api(
     else:
         # Fetch live via scraper with error handling
         try:
-            items = await scraper.search(search_query, max_magnets=settings.max_magnets_per_query)
+            items = await scraper.search(search_query, page=page, max_magnets=settings.max_magnets_per_query)
             # Store in cache
             dict_items = [item.model_dump() for item in items]
             await cache_db.set_query_cache(cache_key, dict_items)
@@ -196,7 +206,9 @@ async def torznab_api(
             logger.error(f"Scraper error during search query '{search_query}': {e}")
             items = []
 
-    # Filter by Torznab categories if requested
+    # Filter by Torznab categories if requested. Requested subcategories are
+    # expanded to their parent category because ext.to category mapping is
+    # parent-level only.
     if cat:
         requested_cats = set()
         for c in cat.split(","):
@@ -204,13 +216,18 @@ async def torznab_api(
             if c_clean.isdigit():
                 requested_cats.add(int(c_clean))
         if requested_cats:
+            expanded_cats = set()
+            for rc in requested_cats:
+                expanded_cats.add(rc)
+                expanded_cats.add((rc // 1000) * 1000)
             items = [
                 item for item in items
-                if item.torznab_cat_id in requested_cats or (item.torznab_cat_id // 1000 * 1000) in requested_cats
+                if item.torznab_cat_id in expanded_cats
             ]
 
-    # Slice limit/offset
-    sliced_items = items[offset : offset + limit] if limit else items
+    # Slice limit/offset, enforcing the caps-advertised maximum of 100
+    effective_limit = min(limit, 100) if limit and limit > 0 else 50
+    sliced_items = items[offset : offset + effective_limit]
 
     # Build Torznab XML
     xml_content = build_torznab_feed_xml(sliced_items, title=f"ext.to Torznab - {search_query}")

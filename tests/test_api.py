@@ -81,6 +81,27 @@ def test_torznab_api_category_filter():
     assert "<rss" in response.text
 
 
+def test_torznab_api_subcategory_filter_matches_parent():
+    # Requesting a subcategory (e.g. Movies/UHD 2045) must fall back to its
+    # parent mapping instead of returning an empty feed.
+    response = client.get("/api?t=search&q=ubuntu&cat=2045")
+    assert response.status_code == 200
+    assert "<rss" in response.text
+
+
+def test_torznab_api_page_param():
+    response = client.get("/api?t=search&q=ubuntu&page=2")
+    assert response.status_code == 200
+    assert "<rss" in response.text
+
+
+def test_torznab_api_limit_clamped_to_caps_max():
+    # Caps advertise max=100; oversized limits must not crash and are clamped.
+    response = client.get("/api?t=search&q=ubuntu&limit=99999")
+    assert response.status_code == 200
+    assert "<rss" in response.text
+
+
 def test_torznab_api_imdbid():
     response = client.get("/api?t=movie&imdbid=tt1234567")
     assert response.status_code == 200
