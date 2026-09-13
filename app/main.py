@@ -36,6 +36,9 @@ scraper = ExtToScraper(
     impersonate=settings.impersonate,
     challenge_wait_seconds=settings.challenge_wait_seconds,
     browser_channel=settings.browser_channel,
+    solve_challenge=settings.solve_challenge,
+    max_solve_clicks=settings.max_solve_clicks,
+    solve_click_gap_seconds=settings.solve_click_gap_seconds,
 )
 
 

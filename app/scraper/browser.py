@@ -30,13 +30,14 @@ CF_STRONG_MARKERS = (
     "window._cf_chl_opt",
     "challenge-error-text",
     "cf-chl-widget",
-    "cdn-cgi/challenge-platform",
 )
 
-# Markers that ALSO appear on perfectly healthy pages that merely embed a
-# Turnstile widget (e.g. a login form), so they only count as a challenge when
+# Markers that ALSO appear on perfectly healthy pages (every Cloudflare-fronted
+# page loads `/cdn-cgi/challenge-platform/scripts/jsd/main.js`, and Turnstile
+# widgets are embedded in ordinary forms), so they only count as a challenge when
 # the response contains no expected page content at all.
 CF_WEAK_MARKERS = (
+    "cdn-cgi/challenge-platform",
     "cf-turnstile",
     "challenges.cloudflare.com",
 )
@@ -67,6 +68,9 @@ class ExtToScraper:
         impersonate: str = "chrome120",
         challenge_wait_seconds: int = 45,
         browser_channel: Optional[str] = None,
+        solve_challenge: bool = True,
+        max_solve_clicks: int = 2,
+        solve_click_gap_seconds: int = 20,
     ):
         self.base_url = base_url.rstrip("/")
         self.headless = headless
@@ -78,6 +82,9 @@ class ExtToScraper:
         self.impersonate = impersonate
         self.challenge_wait_seconds = challenge_wait_seconds
         self.browser_channel = browser_channel
+        self.solve_challenge = solve_challenge
+        self.max_solve_clicks = max_solve_clicks
+        self.solve_click_gap_seconds = solve_click_gap_seconds
         self.parser = ExtToParser(base_url=self.base_url)
         self.mirror_domains = [
             self.base_url,
@@ -85,6 +92,7 @@ class ExtToScraper:
             "https://extto.com",
             "https://ext2.to",
         ]
+        self._working_domain: Optional[str] = None
         self._browser_sem = asyncio.Semaphore(1)
         self._session_lock = asyncio.Lock()
 
@@ -139,7 +147,7 @@ class ExtToScraper:
         fresh = {
             name: value
             for name, value in cookies.items()
-            if value and (name.startswith("cf") or name.startswith("__cf"))
+            if value and (name.startswith("cf") or name.startswith("__cf") or name == "PHPSESSID")
         }
         if not fresh:
             return
@@ -150,6 +158,16 @@ class ExtToScraper:
                 SESSION_STATE_KEY,
                 {"cookies": self._cookies, "browser_user_agent": self._browser_user_agent},
             )
+
+    def _domains(self) -> List[str]:
+        """Mirror domains, trying the last known working one first."""
+        seen = set()
+        ordered: List[str] = []
+        for domain in ([self._working_domain] if self._working_domain else []) + self.mirror_domains:
+            if domain and domain not in seen:
+                seen.add(domain)
+                ordered.append(domain)
+        return ordered
 
     # ---------------------------------------------------------------- search
 
@@ -186,7 +204,16 @@ class ExtToScraper:
                 logger.error(f"Playwright fallback encountered an unexpected error: {e}")
                 html = None
 
-        # 4. Give up: every backend is still behind the Cloudflare challenge.
+        # 4. The browser can end up holding a valid cf_clearance even when its own
+        #    page stayed on the interstitial - the cookie alone is often enough for
+        #    the HTTP path, which is far cheaper than another browser round trip.
+        if (not html or self._is_cloudflare_challenge(html)) and self._cookies.get("cf_clearance"):
+            logger.info("Retrying curl_cffi with the freshly harvested clearance cookie...")
+            retry_html, retry_base = await self._fetch_with_curl_cffi(path)
+            if retry_html and not self._is_cloudflare_challenge(retry_html):
+                html, current_base = retry_html, retry_base
+
+        # 5. Give up: every backend is still behind the Cloudflare challenge.
         if not html or self._is_cloudflare_challenge(html):
             logger.error("Failed to fetch ext.to search results HTML from all backends.")
             return []
@@ -339,10 +366,7 @@ class ExtToScraper:
         loop = asyncio.get_running_loop()
         headers = self._request_headers()
 
-        seen = set()
-        domains = [d for d in self.mirror_domains if not (d in seen or seen.add(d))]
-
-        for domain in domains:
+        for domain in self._domains():
             target_url = f"{domain}{path}"
             try:
                 logger.info(f"Attempting curl_cffi TLS impersonation fetch to {target_url}...")
@@ -456,11 +480,14 @@ class ExtToScraper:
     async def _await_challenge_resolution(self, page) -> Optional[str]:
         """Poll a navigating page until Cloudflare clears it (or we run out of time).
 
-        A managed challenge needs several seconds of JS execution; reading
-        `page.content()` immediately after `domcontentloaded` (the previous
-        behaviour) always returned the interstitial.
+        A managed challenge needs several seconds of JS execution and, for ext.to,
+        an actual click on the Turnstile "Verify you are human" checkbox - it never
+        clears on its own. Reading `page.content()` immediately after
+        `domcontentloaded` (the previous behaviour) always returned the interstitial.
         """
         deadline = time.monotonic() + max(1, self.challenge_wait_seconds)
+        click_attempts = 0
+        last_click = -1e9
         html: Optional[str] = None
         while True:
             try:
@@ -470,12 +497,62 @@ class ExtToScraper:
                 return None
             if not self._is_cloudflare_challenge(html):
                 return html
+
+            now = time.monotonic()
+            if (
+                self.solve_challenge
+                and click_attempts < self.max_solve_clicks
+                and now - last_click >= self.solve_click_gap_seconds
+            ):
+                # Click at most a couple of times with a generous gap: repeatedly
+                # hammering the widget makes Cloudflare escalate to a challenge that
+                # will not clear at all (observed after ~40 rapid attempts).
+                clicked = await self._click_turnstile_widget(page, click_attempts)
+                if clicked:
+                    click_attempts += 1
+                    last_click = time.monotonic()
+
             if time.monotonic() >= deadline:
                 logger.warning(
-                    f"Cloudflare challenge still present after {self.challenge_wait_seconds}s"
+                    f"Cloudflare challenge still present after {self.challenge_wait_seconds}s "
+                    f"({click_attempts} widget click(s) attempted)"
                 )
                 return html
             await asyncio.sleep(2.0)
+
+    async def _click_turnstile_widget(self, page, attempt: int = 0) -> bool:
+        """Click the Cloudflare Turnstile widget (cross-origin iframe) by coordinates.
+
+        Playwright cannot reach inside the challenge iframe's shadow DOM, but the
+        widget accepts a real mouse click on the checkbox, which is what clears the
+        challenge for ext.to.
+        """
+        try:
+            frames = [
+                f for f in page.frames
+                if "challenges.cloudflare.com" in (f.url or "")
+            ]
+            if not frames:
+                return False
+            element = await frames[0].frame_element()
+            box = await element.bounding_box()
+            if not box or not box.get("width"):
+                return False
+
+            if attempt == 0:
+                x = box["x"] + box["width"] / 2          # widget centre
+            else:
+                x = box["x"] + box["width"] * 0.12       # checkbox column
+            y = box["y"] + box["height"] / 2
+
+            await page.mouse.move(max(0, x - 20), max(0, y - 20))
+            await asyncio.sleep(0.4)
+            await page.mouse.click(x, y)
+            logger.info(f"Clicked Cloudflare Turnstile widget at ({x:.0f}, {y:.0f})")
+            return True
+        except Exception as e:
+            logger.debug(f"Could not click Turnstile widget: {e}")
+            return False
 
     async def _fetch_with_playwright(self, path: str) -> Tuple[Optional[str], str]:
         """Fallback Playwright stealth scraper for Cloudflare Turnstile pages.
@@ -496,10 +573,7 @@ class ExtToScraper:
                         browser = await p.chromium.launch(**fallback)
 
                     try:
-                        seen = set()
-                        domains = [d for d in self.mirror_domains if not (d in seen or seen.add(d))]
-
-                        for domain in domains:
+                        for domain in self._domains():
                             target_url = f"{domain}{path}"
                             context = None
                             try:
@@ -537,7 +611,23 @@ class ExtToScraper:
                                 except Exception as e:
                                     logger.debug(f"Could not read browser cookies: {e}")
 
+                                # Cloudflare usually refreshes the page itself once the
+                                # widget is solved; if it did not, re-request now that we
+                                # hold cf_clearance.
+                                if (
+                                    content
+                                    and self._is_cloudflare_challenge(content)
+                                    and self._cookies.get("cf_clearance")
+                                ):
+                                    logger.info("Clearance obtained but page not refreshed - re-requesting")
+                                    try:
+                                        await page.goto(target_url, wait_until="domcontentloaded", timeout=self.timeout * 1000)
+                                        content = await self._await_challenge_resolution(page)
+                                    except Exception as e:
+                                        logger.debug(f"Re-request after clearance failed: {e}")
+
                                 if content and not self._is_cloudflare_challenge(content):
+                                    self._working_domain = domain
                                     logger.info(f"Successfully fetched search results from {domain} via Playwright!")
                                     return content, domain
                                 logger.warning(f"Playwright still challenged on {domain}")
