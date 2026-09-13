@@ -73,9 +73,42 @@ Configure the service via environment variables in `docker-compose.yml` or a `.e
 | `EXT_DOMAIN`            | String  | `https://ext.to`                            | ext.to mirror domain (`https://ext.to`, `https://extto.com`, `https://ext2.to`).       |
 | `DB_PATH`               | String  | `cache.db` (`/app/data/cache.db` in Docker) | File path for persistent SQLite cache.                                                 |
 | `CACHE_TTL_MINUTES`     | Integer | `60`                                        | Duration (in minutes) search results and resolved magnets remain cached.               |
-| `HEADLESS`              | Boolean | `true`                                      | Run Playwright Chromium in headless mode.                                              |
+| `HEADLESS`              | Boolean | `true`                                      | Run Playwright Chromium in headless mode. `false` runs headed under Xvfb (see below).   |
 | `MAX_MAGNETS_PER_QUERY` | Integer | `25`                                        | Max number of magnet links to dynamically resolve per search query.                    |
 | `FLARESOLVERR_URL`      | String  | _(Optional / None)_                         | URL of an external FlareSolverr instance if used for Cloudflare clearance.             |
+| `PROXY_URL`             | String  | _(Optional / None)_                         | HTTP(S) proxy for **both** curl_cffi and Playwright. Needed when Cloudflare blocks the host IP. |
+| `CF_CLEARANCE`          | String  | _(Optional / None)_                         | Pre-solved `cf_clearance` cookie value (same egress IP + matching `USER_AGENT`).        |
+| `USER_AGENT`            | String  | browser UA                                  | UA for curl_cffi + browser context; keep consistent with `IMPERSONATE`.                |
+| `IMPERSONATE`           | String  | `chrome120`                                 | curl_cffi TLS impersonation target for the fast path.                                  |
+| `CHALLENGE_WAIT_SECONDS`| Integer | `45`                                        | How long the browser polls for the Cloudflare challenge to clear before giving up.     |
+| `COOKIE_TTL_MINUTES`    | Integer | `180`                                       | How long a harvested `cf_clearance` cookie is reused from the SQLite cache.            |
+| `BROWSER_CHANNEL`       | String  | _(Optional / None)_                         | Playwright channel, e.g. `chrome` (Google Chrome), `chromium`, `msedge`.                |
+
+---
+
+## Cloudflare troubleshooting
+
+ext.to sits behind a Cloudflare **managed challenge** (`cf-mitigated: challenge`). The
+service tries, in order: `curl_cffi` TLS impersonation → FlareSolverr (if configured) →
+Playwright stealth browser. When a search returns an empty feed, read the container logs:
+
+- `Domain https://… is behind a Cloudflare challenge (HTTP 403, cf-mitigated=True)` —
+  the fast path is blocked. Any clearance cookie harvested by the browser is persisted
+  in `session_cache` and reused by curl_cffi automatically.
+- `Cloudflare challenge still present after Ns` — the browser saw the interstitial for the
+  whole wait window. This is a **hard block for the current egress IP**, not a bug:
+
+  1. **Use a proxy.** Set `PROXY_URL` (residential/out-of-region usually required for
+     torrent indexers on UK/consumer IPs). Both engines honour it.
+  2. **Or import a clearance cookie.** Solve the challenge in a browser on the same public
+     IP, then set `CF_CLEARANCE=<value>` plus a matching `USER_AGENT`. `cf_clearance` is
+     bound to IP + UA, so both must match.
+  3. **Headed browser.** `HEADLESS=false` runs the server under `xvfb-run` inside the image,
+     which passes managed challenges far more often than the headless shell.
+
+Confirmed working: the browser startup, challenge detection, cookie harvesting and the
+SQLite session cache (unit tests + local run). Whether the challenge *clears* depends on
+the egress IP — verify with `docker logs` as above after changing proxy/cookie settings.
 
 ---
 

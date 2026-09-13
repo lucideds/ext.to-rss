@@ -20,12 +20,25 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("extto-rss")
 
 # Globals
-cache_db = CacheDatabase(db_path=settings.db_path, ttl_seconds=settings.cache_ttl_minutes * 60)
+cache_db = CacheDatabase(
+    db_path=settings.db_path,
+    ttl_seconds=settings.cache_ttl_minutes * 60,
+    session_ttl_seconds=settings.cookie_ttl_minutes * 60,
+)
 scraper = ExtToScraper(
     base_url=settings.ext_domain,
     headless=settings.headless,
     flaresolverr_url=settings.flaresolverr_url,
     cache_db=cache_db,
+    proxy_url=settings.proxy_url,
+    cf_clearance=settings.cf_clearance,
+    user_agent=settings.user_agent,
+    impersonate=settings.impersonate,
+    challenge_wait_seconds=settings.challenge_wait_seconds,
+    browser_channel=settings.browser_channel,
+    solve_challenge=settings.solve_challenge,
+    max_solve_clicks=settings.max_solve_clicks,
+    solve_click_gap_seconds=settings.solve_click_gap_seconds,
 )
 
 

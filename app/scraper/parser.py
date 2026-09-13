@@ -90,7 +90,7 @@ class ExtToParser:
             if not title_elem:
                 return None
 
-            title = title_elem.get_text(strip=True)
+            title = title_elem.get_text(" ", strip=True)
             details_path = title_elem.get("href", "")
             details_url = urllib.parse.urljoin(self.base_url, details_path)
 

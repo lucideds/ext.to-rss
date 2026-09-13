@@ -15,7 +15,27 @@ services:
       - CACHE_TTL_MINUTES=60
       - HEADLESS=true
       - MAX_MAGNETS_PER_QUERY=25
+      # --- Cloudflare tuning -------------------------------------------------
+      # How long to wait for the browser challenge to clear before giving up.
+      # - CHALLENGE_WAIT_SECONDS=45
+      # Route every fetch through a proxy (curl_cffi + Playwright). Usually
+      # required when Cloudflare hard-blocks the host IP for this site.
+      # - PROXY_URL=http://user:pass@proxy-host:port
+      # Reuse a clearance cookie obtained elsewhere on the SAME egress IP; the
+      # User-Agent must match the browser that solved the challenge.
+      # - CF_CLEARANCE=replace-with-cf_clearance-cookie-value
+      # - USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) ... Chrome/122.0.0.0 Safari/537.36
+      # - IMPERSONATE=chrome120
+      # - COOKIE_TTL_MINUTES=180
+      # - BROWSER_CHANNEL=chrome
       # - API_KEY=your_secret_api_key
       # - FLARESOLVERR_URL=http://flaresolverr:8191/v1
+    # Chromium needs more than the default 64MB /dev/shm even with
+    # --disable-dev-shm-usage on some pages.
+    shm_size: "1gb"
+    # A crashing browser used to write ~250MB core dump per crash into the
+    # container layer (8GB+). Never dump cores here.
+    ulimits:
+      core: 0
     volumes:
       - ./data:/app/data

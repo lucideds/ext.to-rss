@@ -12,9 +12,10 @@ logger = logging.getLogger(__name__)
 class CacheDatabase:
     """Async SQLite cache for ext.to search queries and magnet link metadata."""
 
-    def __init__(self, db_path: str = "cache.db", ttl_seconds: int = 3600):
+    def __init__(self, db_path: str = "cache.db", ttl_seconds: int = 3600, session_ttl_seconds: int = 10800):
         self.db_path = db_path
         self.ttl_seconds = ttl_seconds
+        self.session_ttl_seconds = session_ttl_seconds
         self._initialized = False
         self._init_lock = asyncio.Lock()
 
@@ -49,6 +50,13 @@ class CacheDatabase:
                     created_at INTEGER NOT NULL
                 )
             """)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS session_cache (
+                    key TEXT PRIMARY KEY,
+                    json_data TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """)
             await db.commit()
         finally:
             await db.close()
@@ -79,6 +87,10 @@ class CacheDatabase:
             try:
                 await db.execute("DELETE FROM query_cache WHERE created_at < ?", (cutoff,))
                 await db.execute("DELETE FROM magnet_cache WHERE created_at < ?", (cutoff,))
+                await db.execute(
+                    "DELETE FROM session_cache WHERE created_at < ?",
+                    (int(time.time()) - self.session_ttl_seconds,),
+                )
                 await db.commit()
                 logger.debug("Pruned expired cache entries.")
             finally:
@@ -161,6 +173,44 @@ class CacheDatabase:
                 (torrent_id, magnet_link, infohash, now)
             )
             await db.commit()
+        finally:
+            await db.close()
+
+    async def get_session_state(self, key: str) -> Optional[Dict]:
+        """Retrieve persisted scraper session state (cookies/UA) if still fresh."""
+        await self.ensure_db()
+        now = int(time.time())
+        db = await self._connect()
+        try:
+            async with db.execute(
+                "SELECT json_data, created_at FROM session_cache WHERE key = ?",
+                (key,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    json_data, created_at = row
+                    if now - created_at < self.session_ttl_seconds:
+                        return json.loads(json_data)
+                    logger.info(f"Session state EXPIRED for key '{key}'")
+        except Exception as e:
+            logger.warning(f"Failed reading session state '{key}': {e}")
+        finally:
+            await db.close()
+        return None
+
+    async def set_session_state(self, key: str, data: Dict):
+        """Persist scraper session state (e.g. Cloudflare clearance cookies)."""
+        await self.ensure_db()
+        now = int(time.time())
+        db = await self._connect()
+        try:
+            await db.execute(
+                "INSERT OR REPLACE INTO session_cache (key, json_data, created_at) VALUES (?, ?, ?)",
+                (key, json.dumps(data, default=str), now)
+            )
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"Failed writing session state '{key}': {e}")
         finally:
             await db.close()
 
