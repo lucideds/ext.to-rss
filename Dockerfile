@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     fonts-unifont \
     xvfb \
+    xauth \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -28,16 +29,20 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 # Copy requirements and install runtime dependencies + Chromium binaries
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
-    playwright install --with-deps chromium && \
+    patchright install --with-deps chromium && \
     chmod -R a+rX /ms-playwright
 
 # Copy application source code
 COPY . .
 RUN mkdir -p /app/data && \
-    groupadd -r appuser && useradd -r -g appuser appuser && \
+    groupadd -r appuser && useradd -r -m -d /home/appuser -g appuser appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
+
+# Chromium's crashpad handler needs a writable HOME ("--database is required"
+# otherwise kills the headed browser), so make sure one exists.
+ENV HOME=/home/appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
