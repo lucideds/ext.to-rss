@@ -350,6 +350,31 @@ class ExtToScraper:
 
     # ---------------------------------------------------------------- fetch
 
+    def _flaresolverr_proxy(self) -> Dict[str, str]:
+        """Build the FlareSolverr proxy payload, splitting out any credentials.
+
+        FlareSolverr hands the proxy to Chromium, which rejects an
+        auth-in-URL proxy ("http://user:pass@host:port") with
+        ERR_NO_SUPPORTED_PROXIES and renders an error page. FlareSolverr's
+        `username`/`password` fields are the supported way to authenticate, so
+        split them out and leave a bare host:port in `url`.
+        """
+        if not self.proxy_url:
+            return {}
+        parsed = urllib.parse.urlparse(self.proxy_url)
+        if not parsed.username:
+            return {"url": self.proxy_url}
+
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        payload = {"url": f"{parsed.scheme or 'http'}://{host}"}
+        if parsed.username:
+            payload["username"] = urllib.parse.unquote(parsed.username)
+        if parsed.password:
+            payload["password"] = urllib.parse.unquote(parsed.password)
+        return payload
+
     def _proxies(self) -> Optional[Dict[str, str]]:
         if not self.proxy_url:
             return None
@@ -423,7 +448,7 @@ class ExtToScraper:
                 "maxTimeout": max(60000, self.timeout * 1000),
             }
             if self.proxy_url:
-                payload["proxy"] = {"url": self.proxy_url}
+                payload["proxy"] = self._flaresolverr_proxy()
 
             def _do_req():
                 return cffi_requests.post(

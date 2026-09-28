@@ -105,6 +105,38 @@ def test_http_error_status_is_not_a_navigation_failure():
     assert "raise" in goto_block, "genuine navigation errors must not be swallowed"
 
 
+def test_flaresolverr_proxy_splits_credentials():
+    """Chromium rejects auth-in-URL proxies; FlareSolverr needs separate fields.
+
+    Regression guard: passing "http://user:pass@host:port" straight through made
+    Chromium render ERR_NO_SUPPORTED_PROXIES, so FlareSolverr reported
+    "Challenge not detected!" while actually returning a proxy error page.
+    """
+    from app.scraper.browser import ExtToScraper
+
+    s = ExtToScraper(proxy_url="http://kaabrvjy:s3cr3t@45.38.219.224:6402")
+    assert s._flaresolverr_proxy() == {
+        "url": "http://45.38.219.224:6402",
+        "username": "kaabrvjy",
+        "password": "s3cr3t",
+    }
+
+    # No credentials: pass through untouched.
+    s2 = ExtToScraper(proxy_url="http://45.38.219.224:6402")
+    assert s2._flaresolverr_proxy() == {"url": "http://45.38.219.224:6402"}
+
+    # No proxy at all.
+    assert ExtToScraper()._flaresolverr_proxy() == {}
+
+    # Percent-encoded credentials are decoded, not passed through raw.
+    s3 = ExtToScraper(proxy_url="http://u%40b:p%40ss@proxy.local:3128")
+    assert s3._flaresolverr_proxy() == {
+        "url": "http://proxy.local:3128",
+        "username": "u@b",
+        "password": "p@ss",
+    }
+
+
 def test_is_cloudflare_challenge():
     scraper = ExtToScraper()
 
