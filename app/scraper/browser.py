@@ -650,11 +650,30 @@ class ExtToScraper:
                                     "Object.defineProperty(navigator, 'webdriver', "
                                     "{get: () => undefined});"
                                 )
-                                await page.goto(
-                                    target_url,
-                                    wait_until="domcontentloaded",
-                                    timeout=self.timeout * 1000,
-                                )
+                                try:
+                                    await page.goto(
+                                        target_url,
+                                        wait_until="domcontentloaded",
+                                        timeout=self.timeout * 1000,
+                                    )
+                                except Exception as goto_err:
+                                    # Cloudflare serves the managed challenge AS a
+                                    # 403 (cf-mitigated: challenge), and Playwright
+                                    # raises ERR_HTTP_RESPONSE_CODE_FAILURE on any
+                                    # non-2xx main-frame response. Letting that
+                                    # escape skipped the challenge page entirely, so
+                                    # the browser could never wait out the challenge
+                                    # or click the widget -- every domain failed
+                                    # identically with 0 results. Only an outright
+                                    # launch/navigation failure should abandon the
+                                    # domain; an HTTP error status is exactly the
+                                    # case the browser exists to handle.
+                                    if "ERR_HTTP_RESPONSE_CODE_FAILURE" not in str(goto_err):
+                                        raise
+                                    logger.debug(
+                                        f"HTTP error status on {target_url}; treating as a "
+                                        f"challenge page rather than a navigation failure"
+                                    )
 
                                 if not self._browser_user_agent:
                                     try:

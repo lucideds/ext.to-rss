@@ -52,8 +52,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 EXPOSE 8000
 
 # Run Uvicorn ASGI server (HOST/PORT env vars configurable).
-# HEADLESS=false wraps the server in Xvfb so the stealth browser can run headed.
+# HEADLESS=false needs an X server for the headed browser. xvfb-run auto-picks a
+# free display (:99, :100, ...) and does NOT export DISPLAY into the process it
+# execs, so Chromium still died with "Missing X server or $DISPLAY" -- and every
+# launch failure leaked 4 zombies. xvfb-run is the wrong tool here. Start Xvfb
+# ourselves, wait for its socket, and export DISPLAY so the exec'd uvicorn
+# inherits it.
 # --no-access-log: the container HEALTHCHECK hits /health every 30s and uvicorn
 # logs each hit, which was ~84% of all log volume (27k lines, none of them
 # useful). Application-level logging is unaffected.
-CMD ["sh", "-c", "UVICORN=\"uvicorn app.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000} --no-access-log\"; if [ \"${HEADLESS:-true}\" = \"false\" ]; then exec xvfb-run -a sh -c \"$UVICORN\"; else exec sh -c \"$UVICORN\"; fi"]
+CMD ["sh", "-c", "if [ \"${HEADLESS:-true}\" = \"false\" ]; then Xvfb :99 -screen 0 1600x1000x24 -nolisten tcp & XVFB_PID=$!; for i in $(seq 1 50); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.2; done; export DISPLAY=:99; fi; exec uvicorn app.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000} --no-access-log"]

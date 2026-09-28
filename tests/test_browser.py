@@ -1,5 +1,6 @@
 import pytest
 import hashlib
+import inspect
 from unittest.mock import MagicMock, patch
 from app.scraper.browser import ExtToScraper
 
@@ -81,6 +82,27 @@ def test_reap_stray_chromium_survives_races():
     with patch("app.scraper.browser.Path", lambda _: FakePath()), \
          patch("app.scraper.browser.os.kill", side_effect=ProcessLookupError):
         scraper._reap_stray_chromium()  # must not raise
+
+
+def test_http_error_status_is_not_a_navigation_failure():
+    """Cloudflare serves its challenge AS a 403; Playwright raises on non-2xx.
+
+    Regression guard: page.goto() raising ERR_HTTP_RESPONSE_CODE_FAILURE used to
+    abandon the domain, so the browser never read the challenge page, never
+    waited out the challenge and never clicked the widget -- every mirror failed
+    identically and searches returned 0 results.
+    """
+    import re
+
+    from app.scraper.browser import ExtToScraper as _S
+
+    src = inspect.getsource(_S._fetch_with_playwright)
+    goto_block = src[src.index("await page.goto("):src.index("if not self._browser_user_agent")]
+    assert "ERR_HTTP_RESPONSE_CODE_FAILURE" in goto_block, (
+        "goto() must tolerate an HTTP error status: that IS the challenge page"
+    )
+    # A non-HTTP failure (DNS, timeout, crash) must still propagate.
+    assert "raise" in goto_block, "genuine navigation errors must not be swallowed"
 
 
 def test_is_cloudflare_challenge():
