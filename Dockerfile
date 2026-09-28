@@ -53,4 +53,7 @@ EXPOSE 8000
 
 # Run Uvicorn ASGI server (HOST/PORT env vars configurable).
 # HEADLESS=false wraps the server in Xvfb so the stealth browser can run headed.
-CMD ["sh", "-c", "if [ \"${HEADLESS:-true}\" = \"false\" ]; then exec xvfb-run -a uvicorn app.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000}; else exec uvicorn app.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000}; fi"]
+# --no-access-log: the container HEALTHCHECK hits /health every 30s and uvicorn
+# logs each hit, which was ~84% of all log volume (27k lines, none of them
+# useful). Application-level logging is unaffected.
+CMD ["sh", "-c", "UVICORN=\"uvicorn app.main:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000} --no-access-log\"; if [ \"${HEADLESS:-true}\" = \"false\" ]; then exec xvfb-run -a sh -c \"$UVICORN\"; else exec sh -c \"$UVICORN\"; fi"]

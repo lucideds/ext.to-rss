@@ -4,6 +4,85 @@ from unittest.mock import MagicMock, patch
 from app.scraper.browser import ExtToScraper
 
 
+def test_reap_stray_chromium_kills_chrome_only(tmp_path, monkeypatch):
+    """The reaper must SIGKILL chrome* processes and leave everything else alone.
+
+    Regression guard: a failed Chromium launch used to leave 4 orphans per
+    attempt, reparented to PID 1 and never reaped, so the host's process table
+    filled with permanent zombies.
+    """
+    scraper = ExtToScraper()
+
+    def fake_proc_dir() -> dict:
+        return {
+            "1": "uvicorn",          # PID 1 must never be signalled
+            "2": "chrome_crashpad",  # target
+            "3": "chrome",           # target
+            "4": "xvfb",             # not chrome
+            "5": "python3",          # not chrome
+        }
+
+    killed: list[int] = []
+
+    class FakeCommFile:
+        def __init__(self, comm):
+            self._comm = comm
+
+        def read_text(self):
+            return self._comm
+
+    class FakeEntry:
+        def __init__(self, pid, comm):
+            self.name = pid
+            self._comm = comm
+
+        def __truediv__(self, other):
+            assert other == "comm"
+            return FakeCommFile(self._comm)
+
+    class FakePath:
+        def __init__(self, mapping):
+            self._mapping = mapping
+
+        def iterdir(self):
+            return iter([FakeEntry(pid, comm) for pid, comm in self._mapping.items()])
+
+    monkeypatch.setattr("app.scraper.browser.Path", lambda _: FakePath(fake_proc_dir()))
+    monkeypatch.setattr("app.scraper.browser.os.getpid", lambda: 999)
+    monkeypatch.setattr(
+        "app.scraper.browser.os.kill",
+        lambda pid, sig: killed.append(pid),
+    )
+
+    scraper._reap_stray_chromium()
+
+    # chrome and chrome_crashpad killed; PID 1, xvfb and python3 untouched.
+    assert killed == [2, 3]
+
+
+def test_reap_stray_chromium_survives_races():
+    """Processes can exit between listing and signalling; that must not raise."""
+    scraper = ExtToScraper()
+
+    class FakeCommFile:
+        def read_text(self):
+            raise FileNotFoundError("gone")
+
+    class VanishedEntry:
+        name = "7"
+
+        def __truediv__(self, other):
+            return FakeCommFile()
+
+    class FakePath:
+        def iterdir(self):
+            return iter([VanishedEntry()])
+
+    with patch("app.scraper.browser.Path", lambda _: FakePath()), \
+         patch("app.scraper.browser.os.kill", side_effect=ProcessLookupError):
+        scraper._reap_stray_chromium()  # must not raise
+
+
 def test_is_cloudflare_challenge():
     scraper = ExtToScraper()
 

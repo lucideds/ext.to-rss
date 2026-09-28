@@ -5,6 +5,10 @@ services:
     # build: .
     container_name: ext-to-rss
     restart: unless-stopped
+    # Reap orphaned browser helpers. Without an init process, Chromium children
+    # that outlive a failed launch reparent to uvicorn (PID 1), which never
+    # reaps them, so they accumulate as permanent zombies.
+    init: true
     ports:
       - "8000:8000"
     environment:

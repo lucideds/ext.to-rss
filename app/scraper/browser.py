@@ -1,9 +1,12 @@
 import asyncio
 import logging
+import os
+import re
+import signal
 import time
 import hashlib
-import re
 import urllib.parse
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from curl_cffi import requests as cffi_requests
 from patchright.async_api import async_playwright
@@ -612,13 +615,27 @@ class ExtToScraper:
         async with self._browser_sem:
             try:
                 async with async_playwright() as p:
+                    browser = None
                     try:
                         browser = await p.chromium.launch(**self._launch_options())
                     except Exception as e:
                         logger.warning(f"Chromium launch with configured options failed ({e}); retrying defaults")
                         fallback = self._launch_options()
                         fallback.pop("channel", None)
-                        browser = await p.chromium.launch(**fallback)
+                        try:
+                            browser = await p.chromium.launch(**fallback)
+                        except Exception as e2:
+                            # A failed launch still leaves Chromium helper processes
+                            # (crashpad, zygote, renderers) behind. They are reparented
+                            # to PID 1, and uvicorn does not reap orphans, so they
+                            # accumulate as permanent zombies -- 4 per failed launch,
+                            # which is how this service grew to ~550 zombie processes
+                            # and pinned ~60% of the host's process table. Kill the
+                            # whole process group and never let a launch failure
+                            # escape the session.
+                            logger.error(f"Chromium launch failed outright: {e2}")
+                            self._reap_stray_chromium()
+                            return None, self.base_url
 
                     try:
                         for domain in self._domains():
@@ -696,6 +713,33 @@ class ExtToScraper:
             except Exception as e:
                 logger.error(f"Playwright launch failed: {e}")
                 return None, self.base_url
+
+    def _reap_stray_chromium(self) -> None:
+        """Kill orphaned Chromium helper processes left by a failed launch.
+
+        Playwright's launch() can raise *after* Chromium has already forked its
+        helper processes (crashpad, zygote, gpu/renderer children). Those orphans
+        are reparented to PID 1; uvicorn does not reap children, so every failed
+        launch permanently adds zombies to the host's process table. Sweep them
+        by name. Best effort -- never raises.
+        """
+        killed = 0
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                comm = (entry / "comm").read_text().strip()
+                if not comm.startswith("chrome"):
+                    continue
+                # Skip PID 1 and our own process: never signal the server itself.
+                if entry.name in ("1", str(os.getpid())):
+                    continue
+                os.kill(int(entry.name), signal.SIGKILL)
+                killed += 1
+            except (OSError, ValueError):
+                continue
+        if killed:
+            logger.warning(f"Killed {killed} orphaned Chromium process(es) after failed launch")
 
     def _is_cloudflare_challenge(self, html: Optional[str]) -> bool:
         """Detect a Cloudflare interstitial/block page (not merely a Turnstile widget)."""
